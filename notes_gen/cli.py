@@ -516,6 +516,12 @@ def main() -> None:
     """Entry point: show rich help or inject 'auto' subcommand for bare URL/file."""
     import sys
 
+    if sys.platform == "win32":
+        for _stream in ("stdout", "stderr"):
+            _s = getattr(sys, _stream, None)
+            if _s is not None and hasattr(_s, "reconfigure"):
+                _s.reconfigure(encoding="utf-8", errors="replace")
+
     args = sys.argv[1:]
     if not args or args == ["--help"] or args == ["-h"]:
         _show_rich_help()
