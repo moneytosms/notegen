@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Convert YouTube videos, playlists, and web pages into Obsidian markdown notes using LLMs"
 readme = "README.md"
 license = { text = "MIT" }
-authors = [{ name = "Sidhu Nair", email = "sidhunair280@gmail.com" }]
+authors = [{ name = "Srimoneyshankar Ajith", email = "moneytosms@gmail.com" }]
 requires-python = ">=3.11"
 keywords = ["obsidian", "notes", "youtube", "llm", "markdown", "knowledge-management"]
 classifiers = [
@@ -33,8 +33,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/sidhunair280/notegen"
-"Bug Tracker" = "https://github.com/sidhunair280/notegen/issues"
+Homepage = "https://github.com/srimoneyshankar/notegen"
+"Bug Tracker" = "https://github.com/srimoneyshankar/notegen/issues"
 
 [project.scripts]
 notegen = "notes_gen.cli:main"
