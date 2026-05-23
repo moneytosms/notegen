@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Python Asyncio Guide</title>
+</head>
+<body>
+    <nav>
+        <a href="/">Home</a>
+        <a href="/about">About</a>
+    </nav>
+    <main>
+        <h1>Python Asyncio Guide</h1>
+        <p>Asyncio is Python's built-in library for writing concurrent code using async/await syntax.</p>
+        <h2>The Event Loop</h2>
+        <p>The event loop is the central execution mechanism in asyncio. It runs coroutines and manages I/O operations.</p>
+        <h2>Coroutines</h2>
+        <p>A coroutine is a function defined with <code>async def</code>. It can pause execution using <code>await</code>.</p>
+        <pre><code>async def fetch_data():
+    await asyncio.sleep(1)
+    return "data"</code></pre>
+        <h2>Tasks and Gather</h2>
+        <p>Use <code>asyncio.gather()</code> to run multiple coroutines concurrently.</p>
+    </main>
+    <footer>
+        <p>Copyright 2024</p>
+        <a href="/privacy">Privacy</a>
+    </footer>
+</body>
+</html>

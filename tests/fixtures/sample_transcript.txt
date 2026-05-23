@@ -1,0 +1,17 @@
+Python asyncio is a library for writing concurrent code using the async/await syntax.
+
+The event loop is the core of asyncio. It runs asynchronous tasks and callbacks, performs network IO operations, and runs subprocesses.
+
+Key concepts:
+- Coroutines: Functions defined with async def
+- Tasks: Wrappers around coroutines that schedule them to run
+- Futures: Low-level awaitable objects representing an eventual result
+
+To create a coroutine:
+async def my_coroutine():
+    await asyncio.sleep(1)
+    return "done"
+
+The asyncio.run() function runs the top-level coroutine and manages the event loop lifecycle.
+
+Common patterns include gather() for running multiple coroutines concurrently, and create_task() for scheduling coroutines without immediately awaiting them.
