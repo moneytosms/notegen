@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -17,6 +18,14 @@ def _make_transcript_list():
         {"text": "Welcome to this Python tutorial.", "start": 0.0, "duration": 3.0},
         {"text": "Today we will cover asyncio.", "start": 3.0, "duration": 3.0},
         {"text": "The event loop is the core.", "start": 6.0, "duration": 3.0},
+    ]
+
+
+def _make_object_transcript_list():
+    return [
+        SimpleNamespace(text="Welcome to this Python tutorial.", start=0.0, duration=3.0),
+        SimpleNamespace(text="Today we will cover asyncio.", start=3.0, duration=3.0),
+        SimpleNamespace(text="The event loop is the core.", start=6.0, duration=3.0),
     ]
 
 
@@ -43,6 +52,20 @@ def test_fetch_video_returns_metadata_and_transcript(mock_yt_api, mock_ytdl):
     assert isinstance(meta, VideoMetadata)
     assert meta.title == "Python Asyncio Tutorial"
     assert meta.channel == "PyChannel"
+    assert "asyncio" in transcript.lower()
+
+
+@patch("notes_gen.sources.youtube.YoutubeDL")
+@patch("notes_gen.sources.youtube.YouTubeTranscriptApi")
+def test_fetch_video_accepts_object_transcript_snippets(mock_yt_api, mock_ytdl):
+    mock_ytdl.return_value.__enter__ = MagicMock(
+        return_value=MagicMock(extract_info=MagicMock(return_value=_make_yt_info()))
+    )
+    mock_ytdl.return_value.__exit__ = MagicMock(return_value=False)
+    mock_yt_api.return_value.fetch.return_value = _make_object_transcript_list()
+
+    _, transcript = fetch_video("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+
     assert "asyncio" in transcript.lower()
 
 

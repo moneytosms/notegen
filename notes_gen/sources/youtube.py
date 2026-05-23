@@ -41,8 +41,13 @@ def _extract_video_id(url: str) -> str:
     return url
 
 
-def _transcript_to_text(transcript_list: list[dict]) -> str:
-    return " ".join(item["text"] for item in transcript_list)
+def _transcript_to_text(transcript_list) -> str:
+    def text_of(item) -> str:
+        if isinstance(item, dict):
+            return item["text"]
+        return item.text
+
+    return " ".join(text_of(item) for item in transcript_list)
 
 
 def _fetch_transcript(video_id: str) -> str:
