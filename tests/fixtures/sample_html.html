@@ -11,16 +11,51 @@
     </nav>
     <main>
         <h1>Python Asyncio Guide</h1>
-        <p>Asyncio is Python's built-in library for writing concurrent code using async/await syntax.</p>
+        <p>Asyncio is Python's built-in library for writing concurrent code using async/await syntax.
+        It allows you to write non-blocking code that can handle many tasks simultaneously without
+        using threads or multiple processes.</p>
+
         <h2>The Event Loop</h2>
-        <p>The event loop is the central execution mechanism in asyncio. It runs coroutines and manages I/O operations.</p>
+        <p>The event loop is the central execution mechanism in asyncio. It runs coroutines, manages
+        I/O operations, and schedules callbacks. The event loop continuously monitors for I/O events
+        and invokes the appropriate callbacks when those events occur. Understanding the event loop
+        is fundamental to writing efficient async Python code.</p>
+
         <h2>Coroutines</h2>
-        <p>A coroutine is a function defined with <code>async def</code>. It can pause execution using <code>await</code>.</p>
-        <pre><code>async def fetch_data():
-    await asyncio.sleep(1)
-    return "data"</code></pre>
+        <p>A coroutine is a function defined with <code>async def</code>. It can pause execution
+        using the <code>await</code> keyword, yielding control back to the event loop. This
+        cooperative multitasking model allows many concurrent operations to share a single thread.
+        Coroutines are the building blocks of async Python programs.</p>
+
+        <pre><code>async def fetch_data(url):
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as response:
+            return await response.json()</code></pre>
+
         <h2>Tasks and Gather</h2>
-        <p>Use <code>asyncio.gather()</code> to run multiple coroutines concurrently.</p>
+        <p>Use <code>asyncio.gather()</code> to run multiple coroutines concurrently. Tasks are
+        wrappers around coroutines that allow them to be scheduled and run on the event loop.
+        You can create a task with <code>asyncio.create_task()</code> and await it later.
+        This is useful when you want to start a coroutine and continue doing other work before
+        collecting the result.</p>
+
+        <h2>Async Context Managers</h2>
+        <p>Async context managers use <code>async with</code> syntax and are useful for managing
+        resources like network connections or file handles in async code. They implement
+        <code>__aenter__</code> and <code>__aexit__</code> methods that return awaitables.
+        Libraries like aiofiles and aiohttp provide async context managers for common I/O operations.</p>
+
+        <h2>Async Iterators</h2>
+        <p>Async iterators allow you to iterate over data sources that produce values asynchronously.
+        They use the <code>async for</code> syntax and implement <code>__aiter__</code> and
+        <code>__anext__</code> methods. This is particularly useful for streaming data from
+        network connections or reading large files without blocking the event loop.</p>
+
+        <h2>Error Handling</h2>
+        <p>Error handling in async code follows the same patterns as synchronous code using
+        try/except blocks. However, you need to be careful about exception propagation across
+        task boundaries. When using <code>asyncio.gather()</code>, exceptions in individual
+        tasks will be re-raised by gather unless you pass <code>return_exceptions=True</code>.</p>
     </main>
     <footer>
         <p>Copyright 2024</p>

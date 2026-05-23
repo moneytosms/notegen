@@ -71,10 +71,10 @@ def test_run_video_pipeline_creates_file(mock_yt_api, mock_ytdl, tmp_path):
     mock_ytdl.return_value.__exit__ = MagicMock(return_value=False)
     mock_yt_api.return_value.fetch.return_value = _make_transcript_list()
 
-    cfg = Config(output_dir=tmp_path)
+    cfg = Config(output_dir=tmp_path, cache=False)
     notes_content = "## Asyncio\n\nEvent loop is the core."
 
-    with patch("notes_gen.sources.youtube.generate_notes", return_value=notes_content):
+    with patch("notes_gen.sources.youtube.generate_notes", return_value=(notes_content, [])):
         output_path = run_video_pipeline("https://www.youtube.com/watch?v=dQw4w9WgXcQ", cfg)
 
     assert output_path.exists()
@@ -92,9 +92,9 @@ def test_run_video_pipeline_slug_filename(mock_yt_api, mock_ytdl, tmp_path):
     mock_ytdl.return_value.__exit__ = MagicMock(return_value=False)
     mock_yt_api.return_value.fetch.return_value = _make_transcript_list()
 
-    cfg = Config(output_dir=tmp_path)
+    cfg = Config(output_dir=tmp_path, cache=False)
 
-    with patch("notes_gen.sources.youtube.generate_notes", return_value="## Notes\n\nContent."):
+    with patch("notes_gen.sources.youtube.generate_notes", return_value=("## Notes\n\nContent.", [])):
         output_path = run_video_pipeline("https://www.youtube.com/watch?v=dQw4w9WgXcQ", cfg)
 
     assert output_path.name == "python-asyncio-tutorial.md"
@@ -145,9 +145,9 @@ def test_run_playlist_pipeline_creates_index(mock_yt_api, mock_ytdl, tmp_path):
     mock_ytdl.return_value.__exit__ = MagicMock(return_value=False)
     mock_yt_api.return_value.fetch.return_value = _make_transcript_list()
 
-    cfg = Config(output_dir=tmp_path)
+    cfg = Config(output_dir=tmp_path, cache=False)
 
-    with patch("notes_gen.sources.youtube.generate_notes", return_value="## Notes\n\nContent."):
+    with patch("notes_gen.sources.youtube.generate_notes", return_value=("## Notes\n\nContent.", [])):
         index_path = run_playlist_pipeline("https://youtube.com/playlist?list=PL123", cfg)
 
     assert index_path.exists()
@@ -167,10 +167,10 @@ def test_run_playlist_pipeline_skips_on_force(mock_yt_api, mock_ytdl, tmp_path):
     mock_ytdl.return_value.__exit__ = MagicMock(return_value=False)
     mock_yt_api.return_value.fetch.side_effect = TranscriptsDisabled("vid001")
 
-    cfg = Config(output_dir=tmp_path)
+    cfg = Config(output_dir=tmp_path, cache=False)
 
     # With force=True, no-caption videos are skipped, pipeline continues
-    with patch("notes_gen.sources.youtube.generate_notes", return_value="## Notes\n\nContent."):
+    with patch("notes_gen.sources.youtube.generate_notes", return_value=("## Notes\n\nContent.", [])):
         index_path = run_playlist_pipeline(
             "https://youtube.com/playlist?list=PL123", cfg, force=True
         )
@@ -189,13 +189,54 @@ def test_run_playlist_pipeline_aborts_without_force(mock_yt_api, mock_ytdl, tmp_
     mock_ytdl.return_value.__exit__ = MagicMock(return_value=False)
     mock_yt_api.return_value.fetch.side_effect = TranscriptsDisabled("vid001")
 
-    cfg = Config(output_dir=tmp_path)
+    cfg = Config(output_dir=tmp_path, cache=False)
 
     with pytest.raises(SystemExit) as exc_info:
-        with patch("notes_gen.sources.youtube.generate_notes", return_value="notes"):
+        with patch("notes_gen.sources.youtube.generate_notes", return_value=("notes", [])):
             run_playlist_pipeline("https://youtube.com/playlist?list=PL123", cfg, force=False)
 
     assert exc_info.value.code != 0
+
+
+@patch("notes_gen.sources.youtube.YoutubeDL")
+@patch("notes_gen.sources.youtube.YouTubeTranscriptApi")
+def test_playlist_resume_skips_completed(mock_yt_api, mock_ytdl, tmp_path):
+    """Videos listed in .progress.json completed are skipped (no transcript fetch)."""
+    import json
+
+    mock_ytdl.return_value.__enter__ = MagicMock(
+        return_value=MagicMock(extract_info=MagicMock(return_value=_make_playlist_info()))
+    )
+    mock_ytdl.return_value.__exit__ = MagicMock(return_value=False)
+    mock_yt_api.return_value.fetch.return_value = _make_transcript_list()
+
+    cfg = Config(output_dir=tmp_path, cache=False)
+    # slug of "Python Tutorial Series" (the playlist title from _make_playlist_info)
+    playlist_dir = tmp_path / "python-tutorial-series"
+    playlist_dir.mkdir()
+
+    # pre-write progress with first video already done
+    # slug of "Intro to Python" (first video title)
+    first_slug = "intro-to-python"
+    progress_file = playlist_dir / ".progress.json"
+    progress_file.write_text(json.dumps({"completed": [first_slug], "failed": []}))
+    (playlist_dir / f"{first_slug}.md").write_text("pre-existing note")
+
+    call_count = 0
+
+    def counting_fetch(video_id):
+        nonlocal call_count
+        call_count += 1
+        return _make_transcript_list()
+
+    mock_yt_api.return_value.fetch.side_effect = counting_fetch
+
+    with patch("notes_gen.sources.youtube.generate_notes", return_value=("## Notes\n\nContent.", [])):
+        run_playlist_pipeline("https://youtube.com/playlist?list=PL123", cfg)
+
+    # only 1 transcript fetch (second video); first was skipped
+    assert call_count == 1
+    assert not progress_file.exists()  # deleted on full success
 
 
 def test_fetch_playlist_video_urls_are_full_youtube_urls():

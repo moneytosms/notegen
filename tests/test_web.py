@@ -68,10 +68,10 @@ def test_run_web_pipeline_creates_file(mock_httpx, tmp_path):
     mock_response.raise_for_status = MagicMock()
     mock_httpx.get.return_value = mock_response
 
-    cfg = Config(output_dir=tmp_path)
+    cfg = Config(output_dir=tmp_path, cache=False)
     notes_content = "## Asyncio Guide\n\nEvent loop and coroutines."
 
-    with patch("notes_gen.sources.web.generate_notes", return_value=notes_content):
+    with patch("notes_gen.sources.web.generate_notes", return_value=(notes_content, [])):
         output_path = run_web_pipeline("https://example.com/asyncio", cfg)
 
     assert output_path.exists()
@@ -87,9 +87,9 @@ def test_run_web_pipeline_frontmatter_has_source_url(mock_httpx, tmp_path):
     mock_response.raise_for_status = MagicMock()
     mock_httpx.get.return_value = mock_response
 
-    cfg = Config(output_dir=tmp_path)
+    cfg = Config(output_dir=tmp_path, cache=False)
 
-    with patch("notes_gen.sources.web.generate_notes", return_value="## Notes\n\nContent."):
+    with patch("notes_gen.sources.web.generate_notes", return_value=("## Notes\n\nContent.", [])):
         output_path = run_web_pipeline("https://example.com/asyncio", cfg)
 
     content = output_path.read_text()
@@ -139,22 +139,22 @@ def _make_async_client_mock(html_text: str) -> MagicMock:
 
 
 def test_run_web_crawl_single_page(tmp_path):
-    cfg = Config(output_dir=tmp_path, web_max_pages=1, web_max_depth=0)
+    cfg = Config(output_dir=tmp_path, web_max_pages=1, web_max_depth=0, cache=False)
     mock_client = _make_async_client_mock(FIXTURE_HTML)
 
     with patch("notes_gen.sources.web.httpx.AsyncClient", return_value=mock_client):
-        with patch("notes_gen.sources.web.generate_notes", return_value="## Notes\n\nContent."):
+        with patch("notes_gen.sources.web.generate_notes", return_value=("## Notes\n\nContent.", [])):
             output_path = run_web_crawl_pipeline("https://example.com/asyncio", cfg)
 
     assert output_path.exists()
 
 
 def test_run_web_crawl_respects_max_pages(tmp_path):
-    cfg = Config(output_dir=tmp_path, web_max_pages=2, web_max_depth=1)
+    cfg = Config(output_dir=tmp_path, web_max_pages=2, web_max_depth=1, cache=False)
     mock_client = _make_async_client_mock(FIXTURE_HTML)
 
     with patch("notes_gen.sources.web.httpx.AsyncClient", return_value=mock_client):
-        with patch("notes_gen.sources.web.generate_notes", return_value="## Notes\n\nContent."):
+        with patch("notes_gen.sources.web.generate_notes", return_value=("## Notes\n\nContent.", [])):
             run_web_crawl_pipeline("https://example.com/", cfg)
 
     # get called at most max_pages times
@@ -163,7 +163,7 @@ def test_run_web_crawl_respects_max_pages(tmp_path):
 
 def test_run_web_crawl_empty_pages_exits(tmp_path):
     """If all page fetches fail, should exit with error."""
-    cfg = Config(output_dir=tmp_path, model="anthropic/claude-sonnet-4-6")
+    cfg = Config(output_dir=tmp_path, model="anthropic/claude-sonnet-4-6", cache=False)
     url = "https://example.com"
 
     mock_client = AsyncMock()

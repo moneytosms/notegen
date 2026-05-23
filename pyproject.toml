@@ -1,6 +1,6 @@
 [project]
 name = "notegen"
-version = "1.0.3"
+version = "2.0.0"
 description = "Convert YouTube videos, playlists, and web pages into Obsidian markdown notes using LLMs"
 readme = "README.md"
 license = { text = "MIT" }
@@ -30,6 +30,7 @@ dependencies = [
     "pyyaml>=6",
     "beautifulsoup4>=4.12",
     "anyio>=4",
+    "watchfiles>=1.2.0",
 ]
 
 [project.urls]

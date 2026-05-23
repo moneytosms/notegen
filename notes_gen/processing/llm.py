@@ -148,16 +148,46 @@ def _extract_tags(text: str) -> tuple[str, list[str]]:
     return clean, tags
 
 
-def _make_messages(chunk: str) -> list[dict]:
+def _make_messages(chunk: str, format_suffix: str = "") -> list[dict]:
+    system = _SYSTEM_PROMPT + format_suffix
     return [
-        {"role": "system", "content": _SYSTEM_PROMPT},
+        {"role": "system", "content": system},
         {"role": "user", "content": _USER_PROMPT_TEMPLATE.format(chunk=chunk)},
     ]
+
+
+_COMPRESS_PROMPT = """\
+Condense the following notes to at most {target_words} words while preserving all key concepts,
+code examples, and callouts. Keep the structure intact. Output only the condensed notes.
+"""
+
+
+def compress_notes(notes: str, target_tokens: int, cfg: Config) -> str:
+    from notes_gen.processing.chunker import count_tokens
+
+    current = count_tokens(notes)
+    if current <= target_tokens:
+        return notes
+
+    target_words = int(target_tokens * 0.75)
+    if cfg.verbose:
+        _console.print(
+            f"[dim]Compressing output from {current} → target {target_tokens} tokens...[/dim]"
+        )
+    messages = [
+        {"role": "system", "content": _COMPRESS_PROMPT.format(target_words=target_words)},
+        {"role": "user", "content": notes},
+    ]
+    return _call_with_retry(cfg, messages)
 
 
 def generate_notes(chunks: list[str], cfg: Config) -> tuple[str, list[str]]:
     if not chunks:
         return "", []
+
+    from notes_gen.output.formats import format_prompt_suffix
+
+    fmt_suffix = format_prompt_suffix(cfg.output_format)
 
     if cfg.verbose:
         import tiktoken
@@ -171,7 +201,7 @@ def generate_notes(chunks: list[str], cfg: Config) -> tuple[str, list[str]]:
 
     if len(chunks) == 1:
         with _console.status(f"[dim]Generating notes via {cfg.model}...[/dim]", spinner="dots"):
-            raw = _call_with_retry(cfg, _make_messages(chunks[0]))
+            raw = _call_with_retry(cfg, _make_messages(chunks[0], fmt_suffix))
             return _extract_tags(raw)
 
     results: list[str | None] = [None] * len(chunks)
@@ -182,7 +212,7 @@ def generate_notes(chunks: list[str], cfg: Config) -> tuple[str, list[str]]:
     ):
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             future_to_idx = {
-                pool.submit(_call_with_retry, cfg, _make_messages(chunk)): i
+                pool.submit(_call_with_retry, cfg, _make_messages(chunk, fmt_suffix)): i
                 for i, chunk in enumerate(chunks)
             }
             for future in as_completed(future_to_idx):

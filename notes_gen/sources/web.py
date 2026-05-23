@@ -11,11 +11,12 @@ import typer
 from bs4 import BeautifulSoup
 
 from notes_gen.config import Config
+from notes_gen.output.formats import format_notes
 from notes_gen.output.formatter import build_frontmatter, slugify
 from notes_gen.output.writer import write_index, write_note
 from notes_gen.processing.chunker import chunk_text
 from notes_gen.processing.filter import remove_meta
-from notes_gen.processing.llm import generate_notes
+from notes_gen.processing.llm import compress_notes, generate_notes
 from notes_gen.processing.merger import merge
 
 _HEADERS = {
@@ -96,20 +97,44 @@ def _is_quality_page(content: str) -> bool:
 
 
 def run_web_pipeline(url: str, cfg: Config) -> Path:
+    from notes_gen.cache import get_notes_cache, set_notes_cache
+
     html = fetch_page(url)
     content = extract_content(html, url)
     title = _get_title(html, url)
 
     filtered = remove_meta(content)
     chunks = chunk_text(filtered, max_tokens=12000, overlap=200)
-    notes_raw = generate_notes(chunks, cfg)
-    notes = merge([notes_raw])
 
+    if cfg.dry_run:
+        from notes_gen.processing.dry_run import print_dry_run_summary
+
+        print_dry_run_summary(title, url, chunks, cfg.model)
+        raise typer.Exit(0)
+
+    if cfg.cache:
+        cached_notes = get_notes_cache(url, cfg.model)
+    else:
+        cached_notes = None
+
+    if cached_notes is not None:
+        if cfg.verbose:
+            typer.echo(f"Using cached notes for {url}", err=True)
+        notes_raw, tags = cached_notes, []
+    else:
+        notes_raw, tags = generate_notes(chunks, cfg)
+        if cfg.cache:
+            set_notes_cache(url, cfg.model, notes_raw)
+
+    notes = merge([notes_raw], similarity_threshold=cfg.merger_similarity_threshold)
+    if cfg.max_output_tokens > 0:
+        notes = compress_notes(notes, cfg.max_output_tokens, cfg)
+    notes = format_notes(notes, cfg.output_format)
     frontmatter = build_frontmatter(
         title=title,
         source=url,
         type="article",
-        tags=[],
+        tags=tags,
         date=date.today(),
     )
     full_content = frontmatter + "\n" + notes
@@ -168,14 +193,28 @@ async def _crawl_async(url: str, cfg: Config) -> Path:
         typer.echo("ERROR: No content could be fetched from the provided URL.", err=True)
         raise typer.Exit(1)
 
+    if cfg.dry_run:
+        from notes_gen.processing.dry_run import print_dry_run_multi_summary
+
+        entries = []
+        for page_url, page_title, content in page_data:
+            filtered = remove_meta(content)
+            chunks = chunk_text(filtered, max_tokens=12000, overlap=200)
+            entries.append((page_title, page_url, chunks))
+        print_dry_run_multi_summary(entries, cfg.model)
+        raise typer.Exit(0)
+
     if len(page_data) == 1:
         page_url, title, content = page_data[0]
         filtered = remove_meta(content)
         chunks = chunk_text(filtered, max_tokens=12000, overlap=200)
-        notes_raw = generate_notes(chunks, cfg)
-        notes = merge([notes_raw])
+        notes_raw, tags = generate_notes(chunks, cfg)
+        notes = merge([notes_raw], similarity_threshold=cfg.merger_similarity_threshold)
+        if cfg.max_output_tokens > 0:
+            notes = compress_notes(notes, cfg.max_output_tokens, cfg)
+        notes = format_notes(notes, cfg.output_format)
         frontmatter = build_frontmatter(
-            title=title, source=page_url, type="article", tags=[], date=date.today()
+            title=title, source=page_url, type="article", tags=tags, date=date.today()
         )
         slug = slugify(title) or "web-notes"
         cfg.output_dir.mkdir(parents=True, exist_ok=True)
@@ -190,10 +229,13 @@ async def _crawl_async(url: str, cfg: Config) -> Path:
     for page_url, title, content in page_data:
         filtered = remove_meta(content)
         chunks = chunk_text(filtered, max_tokens=12000, overlap=200)
-        notes_raw = generate_notes(chunks, cfg)
-        notes = merge([notes_raw])
+        notes_raw, tags = generate_notes(chunks, cfg)
+        notes = merge([notes_raw], similarity_threshold=cfg.merger_similarity_threshold)
+        if cfg.max_output_tokens > 0:
+            notes = compress_notes(notes, cfg.max_output_tokens, cfg)
+        notes = format_notes(notes, cfg.output_format)
         frontmatter = build_frontmatter(
-            title=title, source=page_url, type="article", tags=[], date=date.today()
+            title=title, source=page_url, type="article", tags=tags, date=date.today()
         )
         slug = slugify(title) or "page"
         page_slugs.append(slug)

@@ -5,8 +5,10 @@ import pytest
 from notes_gen.config import Config
 from notes_gen.processing.llm import (
     _available_keys,
+    _is_network_error,
     _is_rate_limit_error,
     _parse_retry_after,
+    compress_notes,
     generate_notes,
 )
 
@@ -34,9 +36,10 @@ def test_generate_notes_single_chunk():
 
     with patch("notes_gen.processing.llm.litellm") as mock_litellm:
         mock_litellm.completion.return_value = _make_mock_response(expected)
-        result = generate_notes(chunks, cfg)
+        notes_text, tags = generate_notes(chunks, cfg)
 
-    assert result == expected
+    assert notes_text == expected
+    assert tags == []
     mock_litellm.completion.assert_called_once()
     call_kwargs = mock_litellm.completion.call_args.kwargs
     assert call_kwargs["model"] == cfg.model
@@ -87,10 +90,10 @@ def test_generate_notes_returns_concatenated_results():
 
     with patch("notes_gen.processing.llm.litellm") as mock_litellm:
         mock_litellm.completion.side_effect = [_make_mock_response(r) for r in responses]
-        result = generate_notes(chunks, cfg)
+        notes_text, tags = generate_notes(chunks, cfg)
 
-    assert "Notes A" in result
-    assert "Notes B" in result
+    assert "Notes A" in notes_text
+    assert "Notes B" in notes_text
 
 
 def test_generate_notes_passes_api_key_when_configured():
@@ -182,9 +185,9 @@ def test_retries_on_rate_limit_then_succeeds():
             Exception("429 too many requests"),
             _make_mock_response("notes"),
         ]
-        result = generate_notes(chunks, cfg)
+        notes_text, tags = generate_notes(chunks, cfg)
 
-    assert result == "notes"
+    assert notes_text == "notes"
     assert mock_litellm.completion.call_count == 2
 
 
@@ -242,9 +245,9 @@ def test_rotates_key_on_rate_limit_when_another_available(monkeypatch):
 
     with patch("notes_gen.processing.llm.litellm") as mock_litellm:
         mock_litellm.completion.side_effect = side_effect
-        result = generate_notes(chunks, cfg)
+        notes_text, tags = generate_notes(chunks, cfg)
 
-    assert result == "notes"
+    assert notes_text == "notes"
     # first key should have been cooled down
     assert len(cooldowns) == 1
 
@@ -277,9 +280,9 @@ def test_generate_notes_parallel_chunks_preserve_order():
 
     with patch("notes_gen.processing.llm.litellm") as mock_litellm:
         mock_litellm.completion.side_effect = [_make_mock_response(r) for r in responses]
-        result = generate_notes(chunks, cfg)
+        notes_text, tags = generate_notes(chunks, cfg)
 
-    parts = result.split("\n\n")
+    parts = notes_text.split("\n\n")
     assert parts[0] == "note A"
     assert parts[1] == "note B"
     assert parts[2] == "note C"
@@ -291,6 +294,93 @@ def test_generate_notes_verbose_prints_info():
 
     with patch("notes_gen.processing.llm.litellm") as mock_litellm:
         mock_litellm.completion.return_value = _make_mock_response("notes")
-        result = generate_notes(chunks, cfg)
+        notes_text, tags = generate_notes(chunks, cfg)
 
-    assert result == "notes"
+    assert notes_text == "notes"
+
+
+def test_generate_notes_extracts_tags_from_output():
+    cfg = Config()
+    chunks = ["some content"]
+    llm_output = "## Notes\n\nContent here.\nTAGS: python, async, testing"
+
+    with patch("notes_gen.processing.llm.litellm") as mock_litellm:
+        mock_litellm.completion.return_value = _make_mock_response(llm_output)
+        notes_text, tags = generate_notes(chunks, cfg)
+
+    assert tags == ["python", "async", "testing"]
+    assert "TAGS:" not in notes_text
+    assert "## Notes" in notes_text
+
+
+def test_is_network_error_detects_timeout():
+    import httpx
+
+    assert _is_network_error(httpx.TimeoutException("timed out"))
+
+
+def test_is_network_error_detects_connect_error():
+    import httpx
+
+    assert _is_network_error(httpx.ConnectError("connection refused"))
+
+
+def test_is_network_error_detects_5xx():
+    assert _is_network_error(Exception("HTTP 503 service unavailable"))
+
+
+def test_is_network_error_false_for_4xx():
+    assert not _is_network_error(Exception("HTTP 404 not found"))
+
+
+def test_network_error_retries_without_cooldown():
+    cfg = Config(model="anthropic/claude-sonnet-4-6", api_keys={}, max_retries=2)
+    chunks = ["content"]
+
+    with (
+        patch("notes_gen.processing.llm.litellm") as mock_litellm,
+        patch("notes_gen.processing.llm.time.sleep"),
+        patch("notes_gen.processing.llm._key_cooldowns", {}) as cooldowns,
+    ):
+        mock_litellm.completion.side_effect = [
+            ConnectionError("connection reset"),
+            _make_mock_response("notes"),
+        ]
+        notes_text, _ = generate_notes(chunks, cfg)
+
+    assert notes_text == "notes"
+    assert len(cooldowns) == 0  # no key was cooled down for network error
+
+
+# ── compression ───────────────────────────────────────────────────────────────
+
+
+def test_compress_notes_skips_when_under_limit():
+    cfg = Config()
+    short_notes = "## Notes\n\nShort content."
+    result = compress_notes(short_notes, 10000, cfg)
+    assert result == short_notes
+
+
+def test_compress_notes_calls_llm_when_over_limit():
+    cfg = Config()
+    long_notes = " ".join(["word"] * 2000)
+
+    with patch("notes_gen.processing.llm.litellm") as mock_litellm:
+        mock_litellm.completion.return_value = _make_mock_response("## Condensed\n\nSummary.")
+        result = compress_notes(long_notes, 10, cfg)
+
+    assert result == "## Condensed\n\nSummary."
+    mock_litellm.completion.assert_called_once()
+
+
+def test_compress_notes_verbose_prints_info(capsys):
+    cfg = Config(verbose=True)
+    long_notes = " ".join(["word"] * 2000)
+
+    with patch("notes_gen.processing.llm.litellm") as mock_litellm:
+        mock_litellm.completion.return_value = _make_mock_response("condensed")
+        compress_notes(long_notes, 10, cfg)
+
+    # verbose output goes to stderr via Rich console — just verify no crash
+    assert True

@@ -24,6 +24,11 @@ class Config:
     max_retries: int = 5
     retry_base_delay: float = 60.0
     verbose: bool = False
+    cache: bool = True
+    dry_run: bool = False
+    max_output_tokens: int = 0
+    merger_similarity_threshold: float = 0.7
+    output_format: str = "obsidian"
 
     def __post_init__(self) -> None:
         if self.output_dir is None:
@@ -57,6 +62,10 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> Config:
         "max_retries",
         "retry_base_delay",
         "verbose",
+        "cache",
+        "max_output_tokens",
+        "merger_similarity_threshold",
+        "output_format",
     )
     for f in scalar_fields:
         if f in raw:
@@ -77,6 +86,9 @@ def merge_cli_overrides(
     model: Optional[str] = None,
     mermaid: Optional[bool] = None,
     verbose: Optional[bool] = None,
+    cache: Optional[bool] = None,
+    dry_run: Optional[bool] = None,
+    output_format: Optional[str] = None,
 ) -> Config:
     overrides: dict = {}
     if output_dir is not None:
@@ -87,6 +99,12 @@ def merge_cli_overrides(
         overrides["mermaid"] = mermaid
     if verbose is not None:
         overrides["verbose"] = verbose
+    if cache is not None:
+        overrides["cache"] = cache
+    if dry_run is not None:
+        overrides["dry_run"] = dry_run
+    if output_format is not None:
+        overrides["output_format"] = output_format
     return replace(cfg, **overrides)
 
 

@@ -10,11 +10,12 @@ from youtube_transcript_api._errors import NoTranscriptFound, TranscriptsDisable
 from yt_dlp import YoutubeDL
 
 from notes_gen.config import Config
+from notes_gen.output.formats import format_notes
 from notes_gen.output.formatter import build_frontmatter, slugify
 from notes_gen.output.writer import write_index, write_note
 from notes_gen.processing.chunker import chunk_text
 from notes_gen.processing.filter import remove_meta
-from notes_gen.processing.llm import generate_notes
+from notes_gen.processing.llm import compress_notes, generate_notes
 from notes_gen.processing.merger import merge
 
 
@@ -50,6 +51,10 @@ def _fetch_transcript(video_id: str) -> str:
     return _transcript_to_text(transcript_list)
 
 
+def _video_url(video_id: str) -> str:
+    return f"https://www.youtube.com/watch?v={video_id}"
+
+
 def fetch_video(url: str) -> tuple[VideoMetadata, str]:
     ydl_opts = {"quiet": True, "no_warnings": True, "skip_download": True}
     with YoutubeDL(ydl_opts) as ydl:
@@ -72,17 +77,57 @@ def fetch_video(url: str) -> tuple[VideoMetadata, str]:
 
 
 def run_video_pipeline(url: str, cfg: Config) -> Path:
+    from notes_gen.cache import (
+        get_notes_cache,
+        get_transcript_cache,
+        set_notes_cache,
+        set_transcript_cache,
+    )
+
     meta, transcript = fetch_video(url)
+    canonical = _video_url(meta.video_id)
+
+    if cfg.cache:
+        cached_transcript = get_transcript_cache(canonical)
+        if cached_transcript is not None:
+            if cfg.verbose:
+                typer.echo(f"Using cached transcript for {canonical}", err=True)
+            transcript = cached_transcript
+        else:
+            set_transcript_cache(canonical, transcript)
+
     filtered = remove_meta(transcript)
     chunks = chunk_text(filtered, max_tokens=12000, overlap=200)
-    notes_raw = generate_notes(chunks, cfg)
-    notes = merge([notes_raw])
 
+    if cfg.dry_run:
+        from notes_gen.processing.dry_run import print_dry_run_summary
+
+        print_dry_run_summary(meta.title, canonical, chunks, cfg.model)
+        raise SystemExit(0)
+
+    if cfg.cache:
+        cached_notes = get_notes_cache(canonical, cfg.model)
+    else:
+        cached_notes = None
+
+    if cached_notes is not None:
+        if cfg.verbose:
+            typer.echo(f"Using cached notes for {canonical}", err=True)
+        notes_raw, tags = cached_notes, []
+    else:
+        notes_raw, tags = generate_notes(chunks, cfg)
+        if cfg.cache:
+            set_notes_cache(canonical, cfg.model, notes_raw)
+
+    notes = merge([notes_raw], similarity_threshold=cfg.merger_similarity_threshold)
+    if cfg.max_output_tokens > 0:
+        notes = compress_notes(notes, cfg.max_output_tokens, cfg)
+    notes = format_notes(notes, cfg.output_format)
     frontmatter = build_frontmatter(
         title=meta.title,
         source=meta.url,
         type="video",
-        tags=[],
+        tags=tags,
         date=date.today(),
     )
     content = frontmatter + "\n" + notes
@@ -121,13 +166,34 @@ def fetch_playlist(url: str) -> tuple[str, list[VideoMetadata]]:
     return playlist_title, videos
 
 
-def run_playlist_pipeline(url: str, cfg: Config, force: bool = False) -> Path:
+def run_playlist_pipeline(
+    url: str, cfg: Config, force: bool = False, force_restart: bool = False
+) -> Path:
     import anyio
 
-    return anyio.run(_run_playlist_async, url, cfg, force)
+    return anyio.run(_run_playlist_async, url, cfg, force, force_restart)
 
 
-async def _run_playlist_async(url: str, cfg: Config, force: bool) -> Path:
+def _load_progress(progress_file: Path) -> dict:
+    if progress_file.exists():
+        import json
+
+        try:
+            return json.loads(progress_file.read_text(encoding="utf-8"))
+        except Exception:
+            return {"completed": [], "failed": []}
+    return {"completed": [], "failed": []}
+
+
+def _save_progress(progress_file: Path, state: dict) -> None:
+    import json
+
+    progress_file.write_text(json.dumps(state), encoding="utf-8")
+
+
+async def _run_playlist_async(
+    url: str, cfg: Config, force: bool, force_restart: bool
+) -> Path:
     import anyio
     from rich.progress import Progress
 
@@ -135,6 +201,11 @@ async def _run_playlist_async(url: str, cfg: Config, force: bool) -> Path:
     playlist_slug = slugify(playlist_title) or "playlist"
     playlist_dir = cfg.output_dir / playlist_slug
     playlist_dir.mkdir(parents=True, exist_ok=True)
+
+    progress_file = playlist_dir / ".progress.json"
+    progress_state = {"completed": [], "failed": []}
+    if not force_restart:
+        progress_state = _load_progress(progress_file)
 
     video_slugs: list[str] = []
     limiter = anyio.CapacityLimiter(cfg.max_concurrent)
@@ -145,6 +216,14 @@ async def _run_playlist_async(url: str, cfg: Config, force: bool) -> Path:
 
         async def _process(idx: int, meta: VideoMetadata) -> None:
             async with limiter:
+                slug_candidate = slugify(meta.title) or f"video-{meta.video_id}"
+                if slug_candidate in progress_state["completed"]:
+                    if cfg.verbose:
+                        typer.echo(f"Skipping {meta.title!r} (already completed)", err=True)
+                    results.append((idx, slug_candidate))
+                    progress.advance(task)
+                    return
+
                 try:
                     transcript = await anyio.to_thread.run_sync(
                         lambda: _fetch_transcript(meta.video_id)
@@ -152,6 +231,9 @@ async def _run_playlist_async(url: str, cfg: Config, force: bool) -> Path:
                 except (TranscriptsDisabled, NoTranscriptFound):
                     msg = f'ERROR: No captions for "{meta.title}" ({meta.url})'
                     typer.echo(msg, err=True)
+                    if slug_candidate not in progress_state["failed"]:
+                        progress_state["failed"].append(slug_candidate)
+                    _save_progress(progress_file, progress_state)
                     if not force:
                         raise SystemExit(1)
                     progress.advance(task)
@@ -159,13 +241,16 @@ async def _run_playlist_async(url: str, cfg: Config, force: bool) -> Path:
 
                 filtered = remove_meta(transcript)
                 chunks = chunk_text(filtered, max_tokens=12000, overlap=200)
-                notes_raw = await anyio.to_thread.run_sync(lambda: generate_notes(chunks, cfg))
-                notes = merge([notes_raw])
+                notes_raw, tags = await anyio.to_thread.run_sync(
+                    lambda: generate_notes(chunks, cfg)
+                )
+                notes = merge([notes_raw], similarity_threshold=cfg.merger_similarity_threshold)
+                notes = format_notes(notes, cfg.output_format)
                 frontmatter = build_frontmatter(
                     title=meta.title,
                     source=meta.url,
                     type="video",
-                    tags=[],
+                    tags=tags,
                     date=date.today(),
                 )
                 content = frontmatter + "\n" + notes
@@ -173,6 +258,9 @@ async def _run_playlist_async(url: str, cfg: Config, force: bool) -> Path:
                 results.append((idx, slug))
                 note_path = playlist_dir / f"{slug}.md"
                 write_note(note_path, content, overwrite_policy="rename")
+                if slug not in progress_state["completed"]:
+                    progress_state["completed"].append(slug)
+                _save_progress(progress_file, progress_state)
                 progress.advance(task)
 
         async with anyio.create_task_group() as tg:
@@ -183,4 +271,6 @@ async def _run_playlist_async(url: str, cfg: Config, force: bool) -> Path:
     results.sort(key=lambda x: x[0])
     video_slugs = [slug for _, slug in results if slug]
     write_index(playlist_dir, video_slugs)
+    if progress_file.exists():
+        progress_file.unlink()
     return playlist_dir / "index.md"

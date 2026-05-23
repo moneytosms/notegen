@@ -1,5 +1,7 @@
 # notegen
 
+[![CI](https://github.com/moneytosms/notegen/actions/workflows/ci.yml/badge.svg)](https://github.com/moneytosms/notegen/actions/workflows/ci.yml)
+
 Convert YouTube videos, playlists, and web pages into structured Obsidian-flavored markdown notes using LLMs.
 
 ## Install

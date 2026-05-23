@@ -6,11 +6,12 @@ from datetime import date
 from pathlib import Path
 
 from notes_gen.config import Config
+from notes_gen.output.formats import format_notes
 from notes_gen.output.formatter import build_frontmatter, slugify
 from notes_gen.output.writer import write_note
 from notes_gen.processing.chunker import chunk_text
 from notes_gen.processing.filter import remove_meta
-from notes_gen.processing.llm import generate_notes
+from notes_gen.processing.llm import compress_notes, generate_notes
 from notes_gen.processing.merger import merge
 
 
@@ -32,11 +33,41 @@ def _normalize(text: str) -> str:
 
 
 def run_text_pipeline(source: str, cfg: Config) -> Path:
+    from notes_gen.cache import get_notes_cache, set_notes_cache
+
     raw = read_text(source)
+    cache_key = source if source != "-" else raw[:200]
     filtered = remove_meta(raw)
     chunks = chunk_text(filtered, max_tokens=12000, overlap=200)
-    chunk_notes = generate_notes(chunks, cfg)
-    notes = merge([chunk_notes]) if isinstance(chunk_notes, str) else merge(chunk_notes)
+
+    if cfg.dry_run:
+        import typer
+
+        from notes_gen.processing.dry_run import print_dry_run_summary
+
+        title_for_dry = (
+            "stdin-notes" if source == "-"
+            else Path(source).stem.replace("_", " ").replace("-", " ").title()
+        )
+        print_dry_run_summary(title_for_dry, source, chunks, cfg.model)
+        raise typer.Exit(0)
+
+    if cfg.cache:
+        cached_notes = get_notes_cache(cache_key, cfg.model)
+    else:
+        cached_notes = None
+
+    if cached_notes is not None:
+        notes_raw, tags = cached_notes, []
+    else:
+        notes_raw, tags = generate_notes(chunks, cfg)
+        if cfg.cache:
+            set_notes_cache(cache_key, cfg.model, notes_raw)
+
+    notes = merge([notes_raw], similarity_threshold=cfg.merger_similarity_threshold)
+    if cfg.max_output_tokens > 0:
+        notes = compress_notes(notes, cfg.max_output_tokens, cfg)
+    notes = format_notes(notes, cfg.output_format)
 
     if source == "-":
         title = "stdin-notes"
@@ -48,7 +79,7 @@ def run_text_pipeline(source: str, cfg: Config) -> Path:
         title=title,
         source=source if source != "-" else "stdin",
         type="article",
-        tags=[],
+        tags=tags,
         date=date.today(),
     )
     content = frontmatter + "\n" + notes

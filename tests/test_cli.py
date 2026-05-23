@@ -124,7 +124,7 @@ def test_text_command_wired(tmp_path):
     from pathlib import Path
 
     fixture = Path(__file__).parent / "fixtures" / "sample_transcript.txt"
-    with patch("notes_gen.sources.text.generate_notes", return_value="## Notes\n\nContent."):
+    with patch("notes_gen.sources.text.generate_notes", return_value=("## Notes\n\nContent.", [])):
         result = runner.invoke(app, ["text", str(fixture), "--output-dir", str(tmp_path)])
     assert result.exit_code == 0
     assert "Notes written to" in result.output
@@ -167,3 +167,144 @@ def test_subcommand_help_still_works():
     result = runner.invoke(app, ["video", "--help"])
     assert result.exit_code == 0
     assert "url" in result.output.lower()
+
+
+def test_config_validate_passes_valid_config(tmp_path, monkeypatch):
+    import notes_gen.cli as cli_mod
+
+    fake_config_path = tmp_path / "config.yaml"
+    fake_config_path.write_text(
+        "model: groq/llama-3.3-70b-versatile\napi_keys:\n  groq:\n    - gsk_test123\n"
+    )
+    monkeypatch.setattr(cli_mod, "DEFAULT_CONFIG_PATH", fake_config_path)
+    result = runner.invoke(app, ["config", "validate"])
+    assert result.exit_code == 0
+    assert "✓" in result.output or "valid" in result.output.lower()
+
+
+def test_config_validate_fails_missing_config(tmp_path, monkeypatch):
+    import notes_gen.cli as cli_mod
+
+    monkeypatch.setattr(cli_mod, "DEFAULT_CONFIG_PATH", tmp_path / "nonexistent.yaml")
+    result = runner.invoke(app, ["config", "validate"])
+    assert result.exit_code == 1
+    assert "✗" in result.output or "not found" in result.output.lower()
+
+
+def test_config_validate_fails_no_key(tmp_path, monkeypatch):
+    import notes_gen.cli as cli_mod
+
+    fake_config_path = tmp_path / "config.yaml"
+    fake_config_path.write_text("model: anthropic/claude-sonnet-4-6\napi_keys:\n  anthropic: []\n")
+    monkeypatch.setattr(cli_mod, "DEFAULT_CONFIG_PATH", fake_config_path)
+    result = runner.invoke(app, ["config", "validate"])
+    assert result.exit_code == 1
+
+
+def test_config_validate_fails_bad_model(tmp_path, monkeypatch):
+    import notes_gen.cli as cli_mod
+
+    fake_config_path = tmp_path / "config.yaml"
+    fake_config_path.write_text("model: claude-sonnet\napi_keys:\n  anthropic:\n    - sk-test\n")
+    monkeypatch.setattr(cli_mod, "DEFAULT_CONFIG_PATH", fake_config_path)
+    result = runner.invoke(app, ["config", "validate"])
+    assert result.exit_code == 1
+    assert "✗" in result.output
+
+
+def test_doctor_success(tmp_path, monkeypatch):
+    import notes_gen.cli as cli_mod
+
+    fake_config_path = tmp_path / "config.yaml"
+    fake_config_path.write_text(
+        "model: groq/llama-3.3-70b-versatile\napi_keys:\n  groq:\n    - gsk_test\n"
+    )
+    monkeypatch.setattr(cli_mod, "DEFAULT_CONFIG_PATH", fake_config_path)
+
+    mock_response = __import__("unittest.mock", fromlist=["MagicMock"]).MagicMock()
+    mock_response.choices = [__import__("unittest.mock", fromlist=["MagicMock"]).MagicMock()]
+    mock_response.choices[0].message.content = "ok"
+
+    with __import__("unittest.mock", fromlist=["patch"]).patch(
+        "litellm.completion", return_value=mock_response
+    ):
+        result = runner.invoke(app, ["doctor"])
+    assert result.exit_code == 0
+    assert "succeeded" in result.output.lower() or "ok" in result.output.lower()
+
+
+def test_doctor_fails_api_error(tmp_path, monkeypatch):
+    import notes_gen.cli as cli_mod
+
+    fake_config_path = tmp_path / "config.yaml"
+    fake_config_path.write_text(
+        "model: groq/llama-3.3-70b-versatile\napi_keys:\n  groq:\n    - gsk_test\n"
+    )
+    monkeypatch.setattr(cli_mod, "DEFAULT_CONFIG_PATH", fake_config_path)
+
+    with __import__("unittest.mock", fromlist=["patch"]).patch(
+        "litellm.completion", side_effect=Exception("401 Unauthorized")
+    ):
+        result = runner.invoke(app, ["doctor"])
+    assert result.exit_code == 1
+    assert "✗" in result.output or "failed" in result.output.lower()
+
+
+def test_dry_run_text_no_llm_call(tmp_path):
+    from pathlib import Path
+
+    fixture = Path(__file__).parent / "fixtures" / "sample_transcript.txt"
+    with __import__("unittest.mock", fromlist=["patch"]).patch(
+        "notes_gen.sources.text.generate_notes"
+    ) as mock_llm:
+        result = runner.invoke(
+            app,
+            ["text", str(fixture), "--output-dir", str(tmp_path), "--dry-run", "--no-cache"],
+        )
+
+    mock_llm.assert_not_called()
+    assert result.exit_code == 0
+    assert not any(p.suffix == ".md" for p in tmp_path.iterdir())
+
+
+def test_dry_run_text_output_has_table(tmp_path):
+    from pathlib import Path
+
+    fixture = Path(__file__).parent / "fixtures" / "sample_transcript.txt"
+    result = runner.invoke(
+        app,
+        ["text", str(fixture), "--output-dir", str(tmp_path), "--dry-run", "--no-cache"],
+    )
+    assert result.exit_code == 0
+    assert "Chunks" in result.output or "Tokens" in result.output
+
+
+def test_dry_run_flag_on_video_command(tmp_path):
+    from unittest.mock import MagicMock, patch
+
+    mock_info = {
+        "id": "dQw4w9WgXcQ",
+        "title": "Test Video",
+        "uploader": "Channel",
+        "webpage_url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+    }
+    transcript = [{"text": " ".join(["word"] * 300), "start": 0.0, "duration": 10.0}]
+
+    with (
+        patch("notes_gen.sources.youtube.YoutubeDL") as mock_ydl,
+        patch("notes_gen.sources.youtube.YouTubeTranscriptApi") as mock_api,
+        patch("notes_gen.sources.youtube.generate_notes") as mock_llm,
+    ):
+        mock_ydl.return_value.__enter__ = MagicMock(
+            return_value=MagicMock(extract_info=MagicMock(return_value=mock_info))
+        )
+        mock_ydl.return_value.__exit__ = MagicMock(return_value=False)
+        mock_api.return_value.fetch.return_value = transcript
+        result = runner.invoke(
+            app,
+            ["video", "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+             "--output-dir", str(tmp_path), "--dry-run", "--no-cache"],
+        )
+
+    mock_llm.assert_not_called()
+    assert result.exit_code == 0

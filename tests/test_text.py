@@ -38,10 +38,10 @@ def test_read_text_normalizes_whitespace():
 def test_text_pipeline_end_to_end(tmp_path):
     from notes_gen.sources.text import run_text_pipeline
 
-    cfg = Config(output_dir=tmp_path, model="anthropic/claude-sonnet-4-6")
+    cfg = Config(output_dir=tmp_path, model="anthropic/claude-sonnet-4-6", cache=False)
     notes_content = "## Asyncio\n\nEvent loop drives everything."
 
-    with patch("notes_gen.sources.text.generate_notes", return_value=notes_content):
+    with patch("notes_gen.sources.text.generate_notes", return_value=(notes_content, [])):
         output_path = run_text_pipeline(str(FIXTURE_PATH), cfg)
 
     assert output_path.exists()
@@ -55,11 +55,11 @@ def test_text_pipeline_stdin(tmp_path):
 
     from notes_gen.sources.text import run_text_pipeline
 
-    cfg = Config(output_dir=tmp_path)
+    cfg = Config(output_dir=tmp_path, cache=False)
     notes_content = "## Overview\n\nContent from stdin."
 
     with (
-        patch("notes_gen.sources.text.generate_notes", return_value=notes_content),
+        patch("notes_gen.sources.text.generate_notes", return_value=(notes_content, [])),
         patch("sys.stdin", io.StringIO("Test content for stdin pipeline")),
     ):
         output_path = run_text_pipeline("-", cfg)
@@ -72,10 +72,10 @@ def test_text_pipeline_output_has_frontmatter(tmp_path):
 
     from notes_gen.sources.text import run_text_pipeline
 
-    cfg = Config(output_dir=tmp_path)
+    cfg = Config(output_dir=tmp_path, cache=False)
     notes_content = "## Section\n\nSome notes."
 
-    with patch("notes_gen.sources.text.generate_notes", return_value=notes_content):
+    with patch("notes_gen.sources.text.generate_notes", return_value=(notes_content, [])):
         output_path = run_text_pipeline(str(FIXTURE_PATH), cfg)
 
     raw = output_path.read_text()
