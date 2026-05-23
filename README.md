@@ -8,6 +8,19 @@ Convert YouTube videos, playlists, and web pages into structured Obsidian-flavor
 pip install notegen
 ```
 
+## Quick start
+
+```bash
+# 1. Create config
+notegen config init
+
+# 2. Open config and add your API key
+notegen config open
+
+# 3. Generate notes
+notegen https://youtube.com/watch?v=...
+```
+
 ## Usage
 
 ```bash
@@ -25,7 +38,8 @@ notegen text <file-or-stdin>
 notegen text -                          # stdin
 
 # Config
-notegen config init   # create ~/.config/notes-gen/config.yaml
+notegen config init   # create config file
+notegen config open   # open config in your default editor
 notegen config show   # print resolved config
 ```
 
@@ -36,11 +50,22 @@ notegen config show   # print resolved config
 | `-o / --output-dir` | Override output directory |
 | `-m / --model` | LiteLLM model string (e.g. `groq/llama-3.3-70b-versatile`) |
 | `--no-mermaid` | Disable mermaid diagram generation |
+| `-v / --verbose` | Show chunk count, token usage, model/key selection, crawl status |
 | `--force` | Skip playlist videos without captions instead of aborting |
 
-## Config file (`~/.config/notes-gen/config.yaml`)
+## Config file
 
-Run `notegen config init` to generate a fully-commented template. Key sections:
+### Location
+
+| OS | Path |
+|---|---|
+| Linux | `~/.config/notes-gen/config.yaml` |
+| macOS | `~/.config/notes-gen/config.yaml` |
+| Windows | `%USERPROFILE%\.config\notes-gen\config.yaml` |
+
+Run `notegen config init` to generate a fully-commented template, then `notegen config open` to edit it.
+
+### Full reference (`~/.config/notes-gen/config.yaml`)
 
 ```yaml
 # Active model — format: <provider>/<model-name>
@@ -81,6 +106,12 @@ api_keys:
 max_concurrent: 5
 web_max_pages: 50
 web_max_depth: 3
+
+# Rate limiting & retry (important for free-tier providers like Groq, Gemini)
+# On a 429 error: cools down the offending key, rotates to another if available,
+# otherwise waits using Retry-After header or exponential backoff.
+max_retries: 5
+retry_base_delay: 60.0   # seconds; backoff = base * 2^attempt
 ```
 
 ### Supported providers
@@ -101,6 +132,27 @@ web_max_depth: 3
 | Ollama (local) | `ollama/llama3` |
 
 Any provider supported by [LiteLLM](https://docs.litellm.ai/docs/providers) works.
+
+## Env var API keys
+
+As an alternative to the config file, set `NOTEGEN_<PROVIDER>_KEY` env vars. These are used as fallback when no keys are configured for a provider:
+
+```bash
+export NOTEGEN_GROQ_KEY=gsk_...
+export NOTEGEN_ANTHROPIC_KEY=sk-ant-...
+export NOTEGEN_GEMINI_KEY=AIzaSy...
+```
+
+Config keys take priority over env vars. Env vars are useful for CI or server use.
+
+## Rate limiting
+
+Free-tier providers (Groq, Gemini, Together AI, etc.) enforce strict TPM/RPM limits. notegen handles 429 errors automatically:
+
+1. Cools down the offending key and rotates to another available key immediately.
+2. If all keys for the provider are exhausted, waits using the `Retry-After` header value (if present) or exponential backoff (`retry_base_delay * 2^attempt`), then retries.
+
+With the defaults (`max_retries: 5`, `retry_base_delay: 60`), the wait sequence is 60s → 120s → 240s → 480s → 960s. Adding multiple API keys from different free accounts is the most effective way to stay under limits.
 
 ## Output format
 

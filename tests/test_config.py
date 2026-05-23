@@ -14,6 +14,9 @@ def test_config_defaults():
     assert cfg.web_max_pages == 50
     assert cfg.web_max_depth == 3
     assert cfg.api_keys == {}
+    assert cfg.max_retries == 5
+    assert cfg.retry_base_delay == 60.0
+    assert cfg.verbose is False
 
 
 def test_load_config_missing_file(tmp_path):
@@ -127,3 +130,37 @@ def test_merge_cli_does_not_mutate_original():
     original_model = cfg.model
     merge_cli_overrides(cfg, model="openai/gpt-4o")
     assert cfg.model == original_model
+
+
+def test_load_config_retry_settings(tmp_path):
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(yaml.dump({"max_retries": 3, "retry_base_delay": 30.0}))
+    cfg = load_config(config_file)
+    assert cfg.max_retries == 3
+    assert cfg.retry_base_delay == 30.0
+
+
+def test_load_config_tilde_expansion(tmp_path):
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(yaml.dump({"output_dir": "~/notes"}))
+    cfg = load_config(config_file)
+    assert "~" not in str(cfg.output_dir)
+    assert cfg.output_dir == Path.home() / "notes"
+
+
+def test_pick_api_key_env_var_fallback(monkeypatch):
+    monkeypatch.setenv("NOTEGEN_GROQ_KEY", "env-key-123")
+    cfg = Config(model="groq/llama-3.3-70b-versatile", api_keys={})
+    assert cfg.pick_api_key() == "env-key-123"
+
+
+def test_pick_api_key_config_takes_priority_over_env(monkeypatch):
+    monkeypatch.setenv("NOTEGEN_GROQ_KEY", "env-key")
+    cfg = Config(model="groq/llama-3.3-70b-versatile", api_keys={"groq": ["config-key"]})
+    assert cfg.pick_api_key() == "config-key"
+
+
+def test_merge_cli_overrides_verbose():
+    cfg = Config()
+    result = merge_cli_overrides(cfg, verbose=True)
+    assert result.verbose is True

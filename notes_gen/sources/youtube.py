@@ -44,6 +44,12 @@ def _transcript_to_text(transcript_list: list[dict]) -> str:
     return " ".join(item["text"] for item in transcript_list)
 
 
+def _fetch_transcript(video_id: str) -> str:
+    api = YouTubeTranscriptApi()
+    transcript_list = api.fetch(video_id)
+    return _transcript_to_text(transcript_list)
+
+
 def fetch_video(url: str) -> tuple[VideoMetadata, str]:
     ydl_opts = {"quiet": True, "no_warnings": True, "skip_download": True}
     with YoutubeDL(ydl_opts) as ydl:
@@ -56,10 +62,8 @@ def fetch_video(url: str) -> tuple[VideoMetadata, str]:
         video_id=info.get("id", _extract_video_id(url)),
     )
 
-    api = YouTubeTranscriptApi()
     try:
-        transcript_list = api.fetch(meta.video_id)
-        transcript = _transcript_to_text(transcript_list)
+        transcript = _fetch_transcript(meta.video_id)
     except (TranscriptsDisabled, NoTranscriptFound):
         typer.echo(f'ERROR: No captions for "{meta.title}" ({meta.url})', err=True)
         raise SystemExit(1)
@@ -85,7 +89,7 @@ def run_video_pipeline(url: str, cfg: Config) -> Path:
     slug = slugify(meta.title) or "video-notes"
     cfg.output_dir.mkdir(parents=True, exist_ok=True)
     output_path = cfg.output_dir / f"{slug}.md"
-    return write_note(output_path, content)
+    return write_note(output_path, content, overwrite_policy="rename")
 
 
 def fetch_playlist(url: str) -> tuple[str, list[VideoMetadata]]:
@@ -104,18 +108,27 @@ def fetch_playlist(url: str) -> tuple[str, list[VideoMetadata]]:
     for entry in entries:
         if not entry:
             continue
+        video_id = entry.get("id", "")
+        url = f"https://www.youtube.com/watch?v={video_id}" if video_id else entry.get("url", "")
         videos.append(
             VideoMetadata(
                 title=entry.get("title", "Unknown"),
                 channel=entry.get("uploader", info.get("uploader", "Unknown")),
-                url=entry.get("url", entry.get("webpage_url", "")),
-                video_id=entry.get("id", ""),
+                url=url,
+                video_id=video_id,
             )
         )
     return playlist_title, videos
 
 
 def run_playlist_pipeline(url: str, cfg: Config, force: bool = False) -> Path:
+    import anyio
+
+    return anyio.run(_run_playlist_async, url, cfg, force)
+
+
+async def _run_playlist_async(url: str, cfg: Config, force: bool) -> Path:
+    import anyio
     from rich.progress import Progress
 
     playlist_title, videos = fetch_playlist(url)
@@ -124,39 +137,50 @@ def run_playlist_pipeline(url: str, cfg: Config, force: bool = False) -> Path:
     playlist_dir.mkdir(parents=True, exist_ok=True)
 
     video_slugs: list[str] = []
+    limiter = anyio.CapacityLimiter(cfg.max_concurrent)
 
     with Progress() as progress:
         task = progress.add_task(f"Processing {len(videos)} videos...", total=len(videos))
-        for meta in videos:
-            progress.advance(task)
-            try:
-                api = YouTubeTranscriptApi()
-                transcript_list = api.fetch(meta.video_id)
-                transcript = _transcript_to_text(transcript_list)
-            except (TranscriptsDisabled, NoTranscriptFound):
-                msg = f'ERROR: No captions for "{meta.title}" ({meta.url})'
-                typer.echo(msg, err=True)
-                if not force:
-                    raise SystemExit(1)
-                continue
+        results: list[tuple[int, str | None]] = []
 
-            filtered = remove_meta(transcript)
-            chunks = chunk_text(filtered, max_tokens=12000, overlap=200)
-            notes_raw = generate_notes(chunks, cfg)
-            notes = merge([notes_raw])
+        async def _process(idx: int, meta: VideoMetadata) -> None:
+            async with limiter:
+                try:
+                    transcript = await anyio.to_thread.run_sync(
+                        lambda: _fetch_transcript(meta.video_id)
+                    )
+                except (TranscriptsDisabled, NoTranscriptFound):
+                    msg = f'ERROR: No captions for "{meta.title}" ({meta.url})'
+                    typer.echo(msg, err=True)
+                    if not force:
+                        raise SystemExit(1)
+                    progress.advance(task)
+                    return
 
-            frontmatter = build_frontmatter(
-                title=meta.title,
-                source=meta.url,
-                type="video",
-                tags=[],
-                date=date.today(),
-            )
-            content = frontmatter + "\n" + notes
-            slug = slugify(meta.title) or f"video-{meta.video_id}"
-            video_slugs.append(slug)
-            note_path = playlist_dir / f"{slug}.md"
-            write_note(note_path, content)
+                filtered = remove_meta(transcript)
+                chunks = chunk_text(filtered, max_tokens=12000, overlap=200)
+                notes_raw = await anyio.to_thread.run_sync(lambda: generate_notes(chunks, cfg))
+                notes = merge([notes_raw])
+                frontmatter = build_frontmatter(
+                    title=meta.title,
+                    source=meta.url,
+                    type="video",
+                    tags=[],
+                    date=date.today(),
+                )
+                content = frontmatter + "\n" + notes
+                slug = slugify(meta.title) or f"video-{meta.video_id}"
+                results.append((idx, slug))
+                note_path = playlist_dir / f"{slug}.md"
+                write_note(note_path, content, overwrite_policy="rename")
+                progress.advance(task)
 
+        async with anyio.create_task_group() as tg:
+            for i, meta in enumerate(videos):
+                tg.start_soon(_process, i, meta)
+
+    # preserve original video order for index
+    results.sort(key=lambda x: x[0])
+    video_slugs = [slug for _, slug in results if slug]
     write_index(playlist_dir, video_slugs)
     return playlist_dir / "index.md"

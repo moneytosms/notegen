@@ -64,3 +64,21 @@ Obsidian-flavored markdown: YAML frontmatter, `> [!TIP]` / `> [!WARNING]` callou
 - Unit tests: no network, no LLM — mock `youtube-transcript-api`, `httpx`, `litellm`
 - Fixtures live in `tests/fixtures/`
 - Coverage target: 80% on `processing/` and `output/`
+
+## Versioning
+
+**After every set of changes, bump the version in `pyproject.toml`.**
+
+Use semver: `MAJOR.MINOR.PATCH`
+- PATCH — bug fixes, docs, refactors, no new behaviour
+- MINOR — new features, new commands/flags, new config fields
+- MAJOR — breaking changes to CLI interface or config format
+
+## Documentation — keep in sync
+
+**Whenever a new feature, command, flag, or config field is added, update both:**
+
+1. **`README.md`** — add to the relevant section (Usage, Options, Config reference, or a new section). Keep the config YAML example and flags table current.
+2. **CLI help strings** (`cli.py`) — update `help=` on commands/options and the app-level help text so `notegen --help` always reflects current capabilities.
+
+This is not optional. A feature without updated docs/help is incomplete.

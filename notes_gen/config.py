@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import random
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -20,6 +21,9 @@ class Config:
     web_max_pages: int = 50
     web_max_depth: int = 3
     api_keys: dict[str, list[str]] = field(default_factory=dict)
+    max_retries: int = 5
+    retry_base_delay: float = 60.0
+    verbose: bool = False
 
     def __post_init__(self) -> None:
         if self.output_dir is None:
@@ -30,7 +34,11 @@ class Config:
         """Return a random key for the active provider, or None if not configured."""
         provider = self.model.split("/")[0] if "/" in self.model else self.model
         keys = [k for k in self.api_keys.get(provider, []) if k and not k.startswith("#")]
-        return random.choice(keys) if keys else None
+        if keys:
+            return random.choice(keys)
+        env_var = f"NOTEGEN_{provider.upper().replace('-', '_').replace('/', '_')}_KEY"
+        env_key = os.environ.get(env_var)
+        return env_key or None
 
 
 def load_config(path: Path = DEFAULT_CONFIG_PATH) -> Config:
@@ -39,8 +47,18 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> Config:
     raw = yaml.safe_load(path.read_text()) or {}
     kwargs: dict = {}
     if "output_dir" in raw:
-        kwargs["output_dir"] = Path(raw["output_dir"])
-    for f in ("model", "mermaid", "max_concurrent", "web_max_pages", "web_max_depth"):
+        kwargs["output_dir"] = Path(raw["output_dir"]).expanduser()
+    scalar_fields = (
+        "model",
+        "mermaid",
+        "max_concurrent",
+        "web_max_pages",
+        "web_max_depth",
+        "max_retries",
+        "retry_base_delay",
+        "verbose",
+    )
+    for f in scalar_fields:
         if f in raw:
             kwargs[f] = raw[f]
     if "api_keys" in raw and isinstance(raw["api_keys"], dict):
@@ -58,6 +76,7 @@ def merge_cli_overrides(
     output_dir: Optional[Path] = None,
     model: Optional[str] = None,
     mermaid: Optional[bool] = None,
+    verbose: Optional[bool] = None,
 ) -> Config:
     overrides: dict = {}
     if output_dir is not None:
@@ -66,6 +85,8 @@ def merge_cli_overrides(
         overrides["model"] = model
     if mermaid is not None:
         overrides["mermaid"] = mermaid
+    if verbose is not None:
+        overrides["verbose"] = verbose
     return replace(cfg, **overrides)
 
 
@@ -149,8 +170,26 @@ api_keys:
   xai:
     # - xai-XXXX
 
+# Env var fallback: if no keys in config for a provider, notegen checks
+# NOTEGEN_<PROVIDER>_KEY env var (e.g. NOTEGEN_GROQ_KEY, NOTEGEN_ANTHROPIC_KEY).
+
 # ── Concurrency & Web crawl ───────────────────────────────────────────────────
 max_concurrent: 5    # parallel YouTube transcript fetches
 web_max_pages: 50    # max pages per web crawl
 web_max_depth: 3     # max link-follow depth
+
+# ── Rate limiting & Retry ─────────────────────────────────────────────────────
+# Free-tier providers (Groq, Gemini, Together AI, etc.) enforce strict TPM/RPM
+# limits. notegen handles 429 errors gracefully:
+#   1. Cool down the offending key and rotate to another key (if available).
+#   2. If all keys are exhausted, wait using the Retry-After header value,
+#      or exponential backoff (retry_base_delay * 2^attempt), then retry.
+#
+# max_retries: total retry attempts per LLM call (default 5).
+# retry_base_delay: base wait in seconds for exponential backoff (default 60).
+#   With 5 retries and base 60s: waits 60 → 120 → 240 → 480 → 960 seconds.
+#   Generous defaults intentionally — free tiers often have 1 req/min limits.
+max_retries: 5
+retry_base_delay: 60.0
+# verbose: false  # set true to show chunk counts, token usage, model/key selection
 """

@@ -5,6 +5,7 @@ import pytest
 from notes_gen.config import Config
 from notes_gen.sources.youtube import (
     VideoMetadata,
+    fetch_playlist,
     fetch_video,
     run_playlist_pipeline,
     run_video_pipeline,
@@ -195,3 +196,15 @@ def test_run_playlist_pipeline_aborts_without_force(mock_yt_api, mock_ytdl, tmp_
             run_playlist_pipeline("https://youtube.com/playlist?list=PL123", cfg, force=False)
 
     assert exc_info.value.code != 0
+
+
+def test_fetch_playlist_video_urls_are_full_youtube_urls():
+    entries = [{"id": "abc123", "title": "Test Video", "uploader": "Channel"}]
+    info = {"title": "My Playlist", "uploader": "Channel", "entries": entries}
+
+    with patch("notes_gen.sources.youtube.YoutubeDL") as mock_ydl:
+        mock_ydl.return_value.__enter__.return_value.extract_info.return_value = info
+        _, videos = fetch_playlist("https://youtube.com/playlist?list=PL123")
+
+    assert videos[0].url == "https://www.youtube.com/watch?v=abc123"
+    assert videos[0].video_id == "abc123"

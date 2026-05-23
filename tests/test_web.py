@@ -1,5 +1,8 @@
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import httpx
+import pytest
 
 from notes_gen.config import Config
 from notes_gen.sources.web import (
@@ -122,32 +125,54 @@ def test_same_domain_links_deduplicates():
     assert len(links) == len(set(links))
 
 
-@patch("notes_gen.sources.web.httpx")
-def test_run_web_crawl_single_page(mock_httpx, tmp_path):
+def _make_async_client_mock(html_text: str) -> MagicMock:
+    """Helper: returns a mock httpx.AsyncClient that yields html_text for any GET."""
     mock_response = MagicMock()
-    mock_response.text = FIXTURE_HTML
+    mock_response.text = html_text
     mock_response.raise_for_status = MagicMock()
-    mock_httpx.get.return_value = mock_response
 
+    mock_client = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+    mock_client.get = AsyncMock(return_value=mock_response)
+    return mock_client
+
+
+def test_run_web_crawl_single_page(tmp_path):
     cfg = Config(output_dir=tmp_path, web_max_pages=1, web_max_depth=0)
+    mock_client = _make_async_client_mock(FIXTURE_HTML)
 
-    with patch("notes_gen.sources.web.generate_notes", return_value="## Notes\n\nContent."):
-        output_path = run_web_crawl_pipeline("https://example.com/asyncio", cfg)
+    with patch("notes_gen.sources.web.httpx.AsyncClient", return_value=mock_client):
+        with patch("notes_gen.sources.web.generate_notes", return_value="## Notes\n\nContent."):
+            output_path = run_web_crawl_pipeline("https://example.com/asyncio", cfg)
 
     assert output_path.exists()
 
 
-@patch("notes_gen.sources.web.httpx")
-def test_run_web_crawl_respects_max_pages(mock_httpx, tmp_path):
-    mock_response = MagicMock()
-    mock_response.text = FIXTURE_HTML
-    mock_response.raise_for_status = MagicMock()
-    mock_httpx.get.return_value = mock_response
-
+def test_run_web_crawl_respects_max_pages(tmp_path):
     cfg = Config(output_dir=tmp_path, web_max_pages=2, web_max_depth=1)
+    mock_client = _make_async_client_mock(FIXTURE_HTML)
 
-    with patch("notes_gen.sources.web.generate_notes", return_value="## Notes\n\nContent."):
-        run_web_crawl_pipeline("https://example.com/", cfg)
+    with patch("notes_gen.sources.web.httpx.AsyncClient", return_value=mock_client):
+        with patch("notes_gen.sources.web.generate_notes", return_value="## Notes\n\nContent."):
+            run_web_crawl_pipeline("https://example.com/", cfg)
 
-    # Should not visit more than max_pages
-    assert mock_httpx.get.call_count <= cfg.web_max_pages
+    # get called at most max_pages times
+    assert mock_client.get.call_count <= cfg.web_max_pages
+
+
+def test_run_web_crawl_empty_pages_exits(tmp_path):
+    """If all page fetches fail, should exit with error."""
+    cfg = Config(output_dir=tmp_path, model="anthropic/claude-sonnet-4-6")
+    url = "https://example.com"
+
+    mock_client = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+    mock_client.get.side_effect = httpx.HTTPError("fail")
+
+    import click
+
+    with patch("notes_gen.sources.web.httpx.AsyncClient", return_value=mock_client):
+        with pytest.raises((SystemExit, click.exceptions.Exit)):
+            run_web_crawl_pipeline(url, cfg)
