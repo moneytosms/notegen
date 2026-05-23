@@ -13,6 +13,7 @@ def test_config_defaults():
     assert cfg.max_concurrent == 5
     assert cfg.web_max_pages == 50
     assert cfg.web_max_depth == 3
+    assert cfg.api_keys == {}
 
 
 def test_load_config_missing_file(tmp_path):
@@ -28,7 +29,7 @@ def test_load_config_partial_yaml(tmp_path):
     cfg = load_config(config_file)
     assert cfg.model == "openai/gpt-4o"
     assert cfg.web_max_pages == 10
-    assert cfg.mermaid is True  # default preserved
+    assert cfg.mermaid is True
 
 
 def test_load_config_full_yaml(tmp_path):
@@ -49,6 +50,57 @@ def test_load_config_full_yaml(tmp_path):
     assert cfg.max_concurrent == 3
 
 
+def test_load_config_api_keys(tmp_path):
+    config_file = tmp_path / "config.yaml"
+    data = {
+        "model": "groq/llama-3.3-70b-versatile",
+        "api_keys": {
+            "groq": ["gsk_key1", "gsk_key2"],
+            "openai": ["sk-key1"],
+        },
+    }
+    config_file.write_text(yaml.dump(data))
+    cfg = load_config(config_file)
+    assert cfg.api_keys["groq"] == ["gsk_key1", "gsk_key2"]
+    assert cfg.api_keys["openai"] == ["sk-key1"]
+
+
+def test_load_config_api_keys_empty_list(tmp_path):
+    config_file = tmp_path / "config.yaml"
+    data = {"api_keys": {"anthropic": []}}
+    config_file.write_text(yaml.dump(data))
+    cfg = load_config(config_file)
+    assert cfg.api_keys.get("anthropic") == []
+
+
+def test_pick_api_key_returns_key_for_provider(tmp_path):
+    cfg = Config(
+        model="groq/llama-3.3-70b-versatile",
+        api_keys={"groq": ["gsk_key1", "gsk_key2"]},
+    )
+    key = cfg.pick_api_key()
+    assert key in ("gsk_key1", "gsk_key2")
+
+
+def test_pick_api_key_returns_none_when_no_keys():
+    cfg = Config(model="groq/llama-3.3-70b-versatile", api_keys={})
+    assert cfg.pick_api_key() is None
+
+
+def test_pick_api_key_returns_none_wrong_provider():
+    cfg = Config(model="groq/llama-3.3-70b-versatile", api_keys={"openai": ["sk-key"]})
+    assert cfg.pick_api_key() is None
+
+
+def test_pick_api_key_rotates_randomly():
+    cfg = Config(
+        model="anthropic/claude-sonnet-4-6",
+        api_keys={"anthropic": ["key-a", "key-b", "key-c"]},
+    )
+    results = {cfg.pick_api_key() for _ in range(50)}
+    assert len(results) > 1  # rotation produces different keys
+
+
 def test_merge_cli_overrides_none_values():
     cfg = Config()
     result = merge_cli_overrides(cfg, output_dir=None, model=None, mermaid=True)
@@ -62,6 +114,12 @@ def test_merge_cli_overrides_with_values(tmp_path):
     assert result.output_dir == tmp_path
     assert result.model == "openai/gpt-4o"
     assert result.mermaid is False
+
+
+def test_merge_cli_preserves_api_keys():
+    cfg = Config(api_keys={"groq": ["gsk_key"]})
+    result = merge_cli_overrides(cfg, model="openai/gpt-4o")
+    assert result.api_keys == {"groq": ["gsk_key"]}
 
 
 def test_merge_cli_does_not_mutate_original():

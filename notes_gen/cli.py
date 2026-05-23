@@ -4,7 +4,13 @@ from typing import Optional
 import typer
 import yaml
 
-from notes_gen.config import DEFAULT_CONFIG_PATH, Config, load_config, merge_cli_overrides
+from notes_gen.config import (
+    CONFIG_TEMPLATE,
+    DEFAULT_CONFIG_PATH,
+    Config,
+    load_config,
+    merge_cli_overrides,
+)
 
 app = typer.Typer(no_args_is_help=True, help="Convert YouTube/web content to Obsidian notes.")
 config_app = typer.Typer(help="Manage configuration.")
@@ -43,16 +49,7 @@ def config_init() -> None:
         typer.echo(f"Config already exists: {DEFAULT_CONFIG_PATH}")
         raise typer.Exit(1)
     DEFAULT_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    defaults = Config()
-    data = {
-        "output_dir": str(defaults.output_dir),
-        "model": defaults.model,
-        "mermaid": defaults.mermaid,
-        "max_concurrent": defaults.max_concurrent,
-        "web_max_pages": defaults.web_max_pages,
-        "web_max_depth": defaults.web_max_depth,
-    }
-    DEFAULT_CONFIG_PATH.write_text(yaml.dump(data, default_flow_style=False))
+    DEFAULT_CONFIG_PATH.write_text(CONFIG_TEMPLATE)
     typer.echo(f"Config written to {DEFAULT_CONFIG_PATH}")
 
 

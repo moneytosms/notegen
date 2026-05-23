@@ -22,8 +22,8 @@ def test_generate_notes_single_chunk():
 
     assert result == expected
     mock_litellm.completion.assert_called_once()
-    call_kwargs = mock_litellm.completion.call_args
-    assert call_kwargs.kwargs["model"] == cfg.model or call_kwargs.args[0] == cfg.model
+    call_kwargs = mock_litellm.completion.call_args.kwargs
+    assert call_kwargs["model"] == cfg.model
 
 
 def test_generate_notes_multiple_chunks_calls_llm_per_chunk():
@@ -33,7 +33,7 @@ def test_generate_notes_multiple_chunks_calls_llm_per_chunk():
 
     with patch("notes_gen.processing.llm.litellm") as mock_litellm:
         mock_litellm.completion.return_value = _make_mock_response(note)
-        result = generate_notes(chunks, cfg)
+        generate_notes(chunks, cfg)
 
     assert mock_litellm.completion.call_count == 3
 
@@ -75,3 +75,30 @@ def test_generate_notes_returns_concatenated_results():
 
     assert "Notes A" in result
     assert "Notes B" in result
+
+
+def test_generate_notes_passes_api_key_when_configured():
+    cfg = Config(
+        model="groq/llama-3.3-70b-versatile",
+        api_keys={"groq": ["gsk_testkey123"]},
+    )
+    chunks = ["some content"]
+
+    with patch("notes_gen.processing.llm.litellm") as mock_litellm:
+        mock_litellm.completion.return_value = _make_mock_response("notes")
+        generate_notes(chunks, cfg)
+
+    call_kwargs = mock_litellm.completion.call_args.kwargs
+    assert call_kwargs.get("api_key") == "gsk_testkey123"
+
+
+def test_generate_notes_no_api_key_when_not_configured():
+    cfg = Config(model="anthropic/claude-sonnet-4-6", api_keys={})
+    chunks = ["some content"]
+
+    with patch("notes_gen.processing.llm.litellm") as mock_litellm:
+        mock_litellm.completion.return_value = _make_mock_response("notes")
+        generate_notes(chunks, cfg)
+
+    call_kwargs = mock_litellm.completion.call_args.kwargs
+    assert "api_key" not in call_kwargs

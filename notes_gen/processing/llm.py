@@ -37,10 +37,14 @@ def generate_notes(chunks: list[str], cfg: Config) -> str:
             {"role": "system", "content": _SYSTEM_PROMPT},
             {"role": "user", "content": _USER_PROMPT_TEMPLATE.format(chunk=chunk)},
         ]
-        response = litellm.completion(
-            model=cfg.model,
-            messages=messages,
-            temperature=0.3,
-        )
+        kwargs: dict = {
+            "model": cfg.model,
+            "messages": messages,
+            "temperature": 0.3,
+        }
+        api_key = cfg.pick_api_key()
+        if api_key:
+            kwargs["api_key"] = api_key
+        response = litellm.completion(**kwargs)
         results.append(response.choices[0].message.content)
     return "\n\n".join(results)
