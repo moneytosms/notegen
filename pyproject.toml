@@ -1,7 +1,23 @@
 [project]
 name = "notegen"
 version = "0.1.0"
+description = "Convert YouTube videos, playlists, and web pages into Obsidian markdown notes using LLMs"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Sidhu Nair", email = "sidhunair280@gmail.com" }]
 requires-python = ">=3.11"
+keywords = ["obsidian", "notes", "youtube", "llm", "markdown", "knowledge-management"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Utilities",
+    "Topic :: Text Processing :: Markup :: Markdown",
+]
 dependencies = [
     "typer>=0.12",
     "httpx>=0.27",
@@ -16,6 +32,10 @@ dependencies = [
     "anyio>=4",
 ]
 
+[project.urls]
+Homepage = "https://github.com/sidhunair280/notegen"
+"Bug Tracker" = "https://github.com/sidhunair280/notegen/issues"
+
 [project.scripts]
 notegen = "notes_gen.cli:main"
 
@@ -25,6 +45,9 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["notes_gen"]
+
+[tool.hatch.build.targets.sdist]
+include = ["notes_gen/", "tests/", "README.md", "pyproject.toml"]
 
 [tool.ruff]
 line-length = 100
