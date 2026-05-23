@@ -77,7 +77,7 @@ def print_dry_run_multi_summary(
         tokens = sum(count_tokens(c) for c in chunks)
         total_chunks += len(chunks)
         total_tokens += tokens
-        label = title[:50] if multi else (source[:60] or title[:60])
+        label = title[:50] if title else source[:60]
         table.add_row(
             label,
             str(len(chunks)),

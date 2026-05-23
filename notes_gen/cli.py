@@ -1,3 +1,4 @@
+import logging
 import platform
 import subprocess
 from pathlib import Path
@@ -5,6 +6,8 @@ from typing import Optional
 
 import typer
 import yaml
+
+logging.getLogger("LiteLLM").setLevel(logging.ERROR)
 
 from notes_gen.config import (
     CONFIG_TEMPLATE,

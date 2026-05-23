@@ -33,6 +33,33 @@ def test_empty_input():
     assert remove_meta("") == ""
 
 
+def test_single_line_transcript_not_fully_stripped():
+    """Transcript with no newlines must not lose all content when one phrase matches."""
+    text = (
+        "Welcome to this tutorial. "
+        "Please like and subscribe to my channel for more content. "
+        "Today we learn about Python generators. "
+        "A generator yields values lazily."
+    )
+    result = remove_meta(text)
+    assert "Python generators" in result
+    assert "generator" in result
+    assert "subscribe" not in result.lower()
+
+
+def test_single_line_sponsor_mid_transcript():
+    """Sponsor mention mid-transcript removed without eating surrounding content."""
+    text = (
+        "First let's cover async/await. "
+        "This video is sponsored by NordVPN. "
+        "Now back to coroutines and event loops."
+    )
+    result = remove_meta(text)
+    assert "async" in result
+    assert "coroutines" in result
+    assert "nordvpn" not in result.lower()
+
+
 def test_removes_patreon_plug():
     text = "Support me on Patreon to get early access.\nDecorators wrap functions."
     result = remove_meta(text)
