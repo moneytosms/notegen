@@ -159,8 +159,8 @@ async def _crawl_async(url: str, cfg: Config) -> Path:
     depth_map: dict[str, int] = {url: 0}
 
     async with httpx.AsyncClient(headers=_HEADERS, follow_redirects=True, timeout=30) as client:
-        with Progress() as progress:
-            task = progress.add_task("Crawling...", total=cfg.web_max_pages)
+        with Progress(transient=True) as progress:
+            task = progress.add_task(f"Crawling {urlparse(url).netloc}...", total=cfg.web_max_pages)
             while queue and len(visited) < cfg.web_max_pages:
                 current_url = queue.popleft()
                 if current_url in visited:
@@ -170,6 +170,7 @@ async def _crawl_async(url: str, cfg: Config) -> Path:
                     continue
                 visited.add(current_url)
                 progress.advance(task)
+                progress.update(task, description=f"[{len(visited)}/{cfg.web_max_pages}] {urlparse(current_url).path[:40] or '/'}")
 
                 try:
                     html = await _fetch_page_async(client, current_url)

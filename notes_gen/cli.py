@@ -24,7 +24,7 @@ app.add_typer(config_app, name="config")
 app.add_typer(cache_app, name="cache")
 
 _KNOWN_SUBCOMMANDS = {
-    "video", "playlist", "web", "text", "config", "cache", "auto", "doctor", "watch"
+    "video", "playlist", "web", "text", "config", "cache", "auto", "doctor", "watch", "setup"
 }
 
 _KNOWN_CONFIG_FIELDS = {
@@ -33,6 +33,36 @@ _KNOWN_CONFIG_FIELDS = {
     "max_retries", "retry_base_delay", "verbose", "cache",
     "max_output_tokens", "merger_similarity_threshold", "output_format",
 }
+
+_PROVIDER_TEST_MODELS = {
+    "anthropic":   "anthropic/claude-haiku-4-5-20251001",
+    "openai":      "openai/gpt-4o-mini",
+    "groq":        "groq/llama-3.3-70b-versatile",
+    "gemini":      "gemini/gemini-2.0-flash",
+    "nvidia_nim":  "nvidia_nim/meta/llama-3.3-70b-instruct",
+    "mistral":     "mistral/mistral-small-latest",
+    "deepseek":    "deepseek/deepseek-chat",
+    "together_ai": "together_ai/meta-llama/Llama-3-70b-chat-hf",
+    "ollama":      "ollama/llama3",
+    "xai":         "xai/grok-2",
+    "cohere":      "cohere/command-r-plus",
+    "perplexity":  "perplexity/sonar",
+}
+
+_PROVIDER_LIST = [
+    ("groq",        "free tier, fast (recommended)"),
+    ("nvidia_nim",  "free tier — build.nvidia.com"),
+    ("gemini",      "free tier"),
+    ("anthropic",   "paid"),
+    ("openai",      "paid"),
+    ("mistral",     "paid"),
+    ("deepseek",    "paid"),
+    ("together_ai", "paid"),
+    ("xai",         "paid"),
+    ("cohere",      "paid"),
+    ("perplexity",  "paid"),
+    ("ollama",      "local, no key needed"),
+]
 
 
 def _run_auto(source: str, cfg: Config, force: bool = False) -> None:
@@ -77,6 +107,7 @@ def config_init() -> None:
     DEFAULT_CONFIG_PATH.write_text(CONFIG_TEMPLATE, encoding="utf-8")
     typer.echo(f"Config written to {DEFAULT_CONFIG_PATH}")
     typer.echo("Next: run `notegen config open` to add your API key.")
+    typer.echo("Tip: `notegen setup` is the recommended way to configure notegen")
 
 
 @config_app.command("open")
@@ -204,7 +235,7 @@ def doctor(
     cfg = load_config(DEFAULT_CONFIG_PATH)
 
     if provider:
-        cfg = merge_cli_overrides(cfg, model=f"{provider}/{cfg.model.split('/')[-1]}")
+        cfg = merge_cli_overrides(cfg, model=_PROVIDER_TEST_MODELS.get(provider, f"{provider}/unknown"))
 
     # run config validate inline
     import os
@@ -221,7 +252,7 @@ def doctor(
 
     _pass(f"Config path: {DEFAULT_CONFIG_PATH}")
     if not DEFAULT_CONFIG_PATH.exists():
-        _fail("Config file missing — run `notegen config init`")
+        _fail("Config missing — run: notegen setup")
         raise typer.Exit(1)
 
     raw: dict = {}
@@ -232,7 +263,7 @@ def doctor(
         _fail(f"Invalid YAML: {e}")
         raise typer.Exit(1)
 
-    model = raw.get("model", cfg.model)
+    model = cfg.model
     if "/" not in str(model):
         _fail(f"Model missing provider prefix: {model!r}")
         ok = False
@@ -436,6 +467,153 @@ def watch(
     run_watch(directory, cfg)
 
 
+def _merge_config(
+    path: "Path",
+    provider: str,
+    model: str,
+    output_dir: str,
+    new_keys: "list[str]",
+) -> None:
+    """Merge new settings into existing config without overwriting existing keys."""
+    import yaml as _yaml
+
+    if path.exists():
+        raw = _yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    else:
+        raw = {}
+
+    if model:
+        raw["model"] = model
+    if output_dir and output_dir != "~/notes":
+        raw["output_dir"] = output_dir
+
+    if "api_keys" not in raw or not isinstance(raw["api_keys"], dict):
+        raw["api_keys"] = {}
+    if provider not in raw["api_keys"] or not isinstance(raw["api_keys"][provider], list):
+        raw["api_keys"][provider] = []
+
+    existing = set(raw["api_keys"][provider])
+    for k in new_keys:
+        if k and k not in existing:
+            raw["api_keys"][provider].append(k)
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(_yaml.dump(raw, default_flow_style=False, allow_unicode=True), encoding="utf-8")
+
+
+@app.command()
+def setup() -> None:
+    """Interactive guided setup wizard — configure provider, model, API keys."""
+    from rich.console import Console
+
+    console = Console()
+    console.print("\n[bold cyan]notegen setup[/] — guided configuration\n")
+
+    # Step 1: Choose provider
+    console.print("[bold]Available providers:[/]")
+    for i, (prov, label) in enumerate(_PROVIDER_LIST, 1):
+        console.print(f"  [green]{i:2}[/] {prov:<15} [dim]{label}[/]")
+
+    console.print("\nChoose provider [Enter = groq]: ", end="")
+    choice = input().strip()
+    if not choice:
+        provider = "groq"
+    elif choice.isdigit() and 1 <= int(choice) <= len(_PROVIDER_LIST):
+        provider = _PROVIDER_LIST[int(choice) - 1][0]
+    else:
+        provider = choice
+
+    # Step 2: Choose model
+    default_model = _PROVIDER_TEST_MODELS.get(provider, f"{provider}/unknown")
+    console.print(f"\nModel [Enter = {default_model}]: ", end="")
+    model_input = input().strip()
+    model = model_input if model_input else default_model
+
+    # Step 3: Output directory
+    console.print("\nOutput directory [Enter = ~/notes]: ", end="")
+    output_dir = input().strip() or "~/notes"
+
+    # Step 4: API keys
+    all_new_keys: list[str] = []
+    if provider != "ollama":
+        console.print(f"\nPaste API key(s) for [bold]{provider}[/] (blank line to stop):")
+        while True:
+            console.print("  key: ", end="")
+            key = input().strip()
+            if not key:
+                break
+            if key.startswith("#") or len(key) < 8:
+                console.print("  [yellow]Skipped — looks like a placeholder[/]")
+                continue
+            all_new_keys.append(key)
+            console.print("  [green]✓[/] added")
+
+    # Step 5: Additional providers
+    extra_providers: list[tuple[str, list[str]]] = []
+    console.print("\nAdd keys for another provider? [y/N]: ", end="")
+    if input().strip().lower() == "y":
+        while True:
+            console.print("Provider name (blank to stop): ", end="")
+            extra_prov = input().strip()
+            if not extra_prov:
+                break
+            extra_keys: list[str] = []
+            console.print(f"Keys for {extra_prov} (blank to stop):")
+            while True:
+                console.print("  key: ", end="")
+                k = input().strip()
+                if not k:
+                    break
+                if not k.startswith("#") and len(k) >= 8:
+                    extra_keys.append(k)
+                    console.print("  [green]✓[/] added")
+            if extra_keys:
+                extra_providers.append((extra_prov, extra_keys))
+
+    # Step 6: Write config
+    if DEFAULT_CONFIG_PATH.exists():
+        _merge_config(DEFAULT_CONFIG_PATH, provider, model, output_dir, all_new_keys)
+        for ep, ek in extra_providers:
+            _merge_config(DEFAULT_CONFIG_PATH, ep, "", "", ek)
+        console.print(f"\n[green]✓[/] Config updated: {DEFAULT_CONFIG_PATH}")
+    else:
+        DEFAULT_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        DEFAULT_CONFIG_PATH.write_text(CONFIG_TEMPLATE, encoding="utf-8")
+        _merge_config(DEFAULT_CONFIG_PATH, provider, model, output_dir, all_new_keys)
+        for ep, ek in extra_providers:
+            _merge_config(DEFAULT_CONFIG_PATH, ep, "", "", ek)
+        console.print(f"\n[green]✓[/] Config created: {DEFAULT_CONFIG_PATH}")
+
+    # Step 7: Run doctor
+    console.print("\nRun doctor to verify connection? [Y/n]: ", end="")
+    if input().strip().lower() != "n":
+        try:
+            import time
+            import litellm
+
+            cfg = load_config(DEFAULT_CONFIG_PATH)
+            console.print(f"\n[dim]Testing {cfg.model}...[/]")
+            api_key = cfg.pick_api_key()
+            kwargs: dict = {
+                "model": cfg.model,
+                "messages": [{"role": "user", "content": "Reply with the single word: ok"}],
+                "max_tokens": 5,
+                "temperature": 0,
+            }
+            if api_key:
+                kwargs["api_key"] = api_key
+            t0 = time.monotonic()
+            resp = litellm.completion(**kwargs)
+            ms = int((time.monotonic() - t0) * 1000)
+            reply = resp.choices[0].message.content.strip()
+            console.print(f"[green]✓[/] API call OK — {ms}ms, reply: {reply!r}")
+        except Exception as exc:
+            console.print(f"[red]✗[/] API call failed: {exc}")
+            console.print("[dim]Check your API key and try `notegen doctor`[/]")
+
+    console.print("\n[green]Setup complete.[/] Run: notegen <url>\n")
+
+
 def _show_rich_help() -> None:
     from importlib.metadata import version as _ver
 
@@ -453,66 +631,65 @@ def _show_rich_help() -> None:
         "YouTube · playlists · web pages → Obsidian notes\n"
     )
 
-    def _table() -> Table:
+    def _table(flag_col: bool = False) -> Table:
         t = Table(box=None, show_header=False, padding=(0, 2, 0, 2), expand=False)
-        t.add_column(no_wrap=True, style="green")
+        t.add_column(no_wrap=True, style="green" if not flag_col else "yellow")
         t.add_column(style="dim")
         return t
 
-    console.print("[bold]SETUP[/] [dim](first time)[/]")
+    console.print("[bold]FIRST-TIME SETUP[/]")
     t = _table()
-    t.add_row("notegen config init", "create config file")
-    t.add_row("notegen config open", "open it and add your API key")
-    t.add_row("notegen <url-or-file>", "generate notes")
+    t.add_row("notegen setup", "guided wizard — choose provider, add API key, verify")
     console.print(t)
 
-    console.print("\n[bold]USAGE[/]")
+    console.print("\n[bold]COMMANDS[/]")
     t = _table()
-    t.add_row("notegen <youtube-watch-url>", "video → single note")
-    t.add_row("notegen <youtube-playlist-url>", "playlist → folder + index.md")
-    t.add_row("notegen <https://...>", "crawl web page → notes")
-    t.add_row("notegen <file.txt>", "local text / transcript")
-    t.add_row("notegen text -", "read from stdin")
-    console.print(t)
-
-    console.print("\n[bold]CONFIG COMMANDS[/]")
-    t = _table()
-    t.add_row("notegen config init", "create config")
-    t.add_row("notegen config open", "open in default editor")
-    t.add_row("notegen config show", "print resolved config")
-    t.add_row("notegen config validate", "check config structure + keys")
-    t.add_row("notegen doctor", "validate config + test API connection")
-    console.print(t)
-
-    console.print("\n[bold]CACHE COMMANDS[/]")
-    t = _table()
-    t.add_row("notegen cache clear", "remove all cached transcripts + notes")
-    console.print(t)
-
-    console.print("\n[bold]WATCH[/]")
-    t = _table()
+    t.add_row("notegen <url-or-file>", "auto-detect source (YouTube, web, file)")
+    t.add_row("notegen video <url>", "YouTube video → single note")
+    t.add_row("notegen playlist <url>", "YouTube playlist → folder + index.md")
+    t.add_row("notegen web <url>", "crawl web page → notes")
+    t.add_row("notegen text <file|->", "local file or stdin")
+    t.add_row("notegen auto <source>", "explicit auto-detect")
     t.add_row("notegen watch <dir>", "auto-process new .txt/.md files dropped in dir")
     console.print(t)
 
-    console.print("\n[bold]OPTIONS[/] [dim](apply to all commands)[/]")
-    t = Table(box=None, show_header=False, padding=(0, 2, 0, 2), expand=False)
-    t.add_column(no_wrap=True, style="yellow")
-    t.add_column(style="dim")
+    console.print("\n[bold]SOURCE FLAGS[/] [dim](video · playlist · web · text · auto)[/]")
+    t = _table(flag_col=True)
     t.add_row("-o / --output-dir PATH", "override output directory")
     t.add_row("-m / --model TEXT", "LiteLLM model  e.g. [green]groq/llama-3.3-70b-versatile[/]")
     t.add_row("-v / --verbose", "show chunk count, token usage, crawl status")
     t.add_row("--no-mermaid", "disable mermaid diagram generation")
     t.add_row("--no-cache", "skip cache read/write for this run")
-    t.add_row("-n / --dry-run", "print token/cost estimate; skip LLM call")
+    t.add_row("-n / --dry-run", "print token estimate; skip LLM call")
     t.add_row("--format TEXT", "obsidian (default) | logseq | plain | roam")
-    t.add_row("--force", "skip videos without captions (playlist)")
+    t.add_row("--force", "skip playlist videos without captions")
     t.add_row("--force-restart", "ignore playlist resume file, reprocess all")
+    console.print(t)
+
+    console.print("\n[bold]SETUP & DIAGNOSTICS[/]")
+    t = _table()
+    t.add_row("notegen setup", "interactive first-run wizard")
+    t.add_row("notegen doctor [-p PROVIDER]", "config check + real API call")
+    console.print(t)
+
+    console.print("\n[bold]CONFIG[/]")
+    t = _table()
+    t.add_row("notegen config init", "create config file [dim](use setup instead)[/]")
+    t.add_row("notegen config open", "open in default editor")
+    t.add_row("notegen config show", "print resolved config")
+    t.add_row("notegen config validate", "check structure + API key presence")
+    console.print(t)
+
+    console.print("\n[bold]CACHE[/]")
+    t = _table()
+    t.add_row("notegen cache clear", "remove all cached transcripts + notes")
     console.print(t)
 
     console.print("\n[bold]CONFIG FILE[/]")
     console.print("  [dim]Linux/macOS[/]  [green]~/.config/notes-gen/config.yaml[/]")
     win_path = r"%USERPROFILE%\.config\notes-gen\config.yaml"
-    console.print(f"  [dim]Windows[/]     [green]{win_path}[/]\n")
+    console.print(f"  [dim]Windows[/]     [green]{win_path}[/]")
+    console.print("\n  [dim]Free providers: groq · nvidia_nim · gemini[/]\n")
 
 
 def main() -> None:

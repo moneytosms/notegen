@@ -128,6 +128,7 @@ mermaid: true
 #   groq/mixtral-8x7b-32768
 #   gemini/gemini-1.5-pro
 #   gemini/gemini-2.0-flash
+#   nvidia_nim/meta/llama-3.3-70b-instruct  # free tier — build.nvidia.com
 #   nvidia_nim/meta/llama-3.1-70b-instruct
 #   nvidia_nim/mistralai/mixtral-8x7b-instruct
 #   mistral/mistral-large-latest
@@ -160,7 +161,7 @@ api_keys:
   gemini:
     # - AIzaSyXXXX
 
-  # NVIDIA NIM — https://build.nvidia.com/
+  # NVIDIA NIM (free tier) — https://build.nvidia.com — key format: nvapi-XXXX
   nvidia_nim:
     # - nvapi-XXXX
 
@@ -189,7 +190,8 @@ api_keys:
     # - xai-XXXX
 
 # Env var fallback: if no keys in config for a provider, notegen checks
-# NOTEGEN_<PROVIDER>_KEY env var (e.g. NOTEGEN_GROQ_KEY, NOTEGEN_ANTHROPIC_KEY).
+# NOTEGEN_<PROVIDER>_KEY env var (e.g. NOTEGEN_GROQ_KEY, NOTEGEN_ANTHROPIC_KEY,
+# NOTEGEN_NVIDIA_NIM_KEY).
 
 # ── Concurrency & Web crawl ───────────────────────────────────────────────────
 max_concurrent: 5    # parallel YouTube transcript fetches

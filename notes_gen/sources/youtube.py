@@ -215,8 +215,10 @@ async def _run_playlist_async(
     video_slugs: list[str] = []
     limiter = anyio.CapacityLimiter(cfg.max_concurrent)
 
+    done_count = [0]
+    total_videos = len(videos)
     with Progress() as progress:
-        task = progress.add_task(f"Processing {len(videos)} videos...", total=len(videos))
+        task = progress.add_task(f"[0/{total_videos}] Starting...", total=total_videos)
         results: list[tuple[int, str | None]] = []
 
         async def _process(idx: int, meta: VideoMetadata) -> None:
@@ -226,6 +228,8 @@ async def _run_playlist_async(
                     if cfg.verbose:
                         typer.echo(f"Skipping {meta.title!r} (already completed)", err=True)
                     results.append((idx, slug_candidate))
+                    done_count[0] += 1
+                    progress.update(task, description=f"[{done_count[0]}/{total_videos}] {meta.title[:40]}")
                     progress.advance(task)
                     return
 
@@ -241,13 +245,15 @@ async def _run_playlist_async(
                     _save_progress(progress_file, progress_state)
                     if not force:
                         raise SystemExit(1)
+                    done_count[0] += 1
+                    progress.update(task, description=f"[{done_count[0]}/{total_videos}] {meta.title[:40]} (skipped)")
                     progress.advance(task)
                     return
 
                 filtered = remove_meta(transcript)
                 chunks = chunk_text(filtered, max_tokens=12000, overlap=200)
                 notes_raw, tags = await anyio.to_thread.run_sync(
-                    lambda: generate_notes(chunks, cfg)
+                    lambda: generate_notes(chunks, cfg, max_chunk_workers=1)
                 )
                 notes = merge([notes_raw], similarity_threshold=cfg.merger_similarity_threshold)
                 notes = format_notes(notes, cfg.output_format)
@@ -266,6 +272,8 @@ async def _run_playlist_async(
                 if slug not in progress_state["completed"]:
                     progress_state["completed"].append(slug)
                 _save_progress(progress_file, progress_state)
+                done_count[0] += 1
+                progress.update(task, description=f"[{done_count[0]}/{total_videos}] {meta.title[:40]}")
                 progress.advance(task)
 
         async with anyio.create_task_group() as tg:

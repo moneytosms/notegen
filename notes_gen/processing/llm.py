@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import httpx
 import litellm
 from rich.console import Console
+from rich.progress import BarColumn, Progress, SpinnerColumn, TaskProgressColumn, TextColumn
 
 from notes_gen.config import Config
 
@@ -181,7 +182,11 @@ def compress_notes(notes: str, target_tokens: int, cfg: Config) -> str:
     return _call_with_retry(cfg, messages)
 
 
-def generate_notes(chunks: list[str], cfg: Config) -> tuple[str, list[str]]:
+def generate_notes(
+    chunks: list[str],
+    cfg: Config,
+    max_chunk_workers: int = 0,
+) -> tuple[str, list[str]]:
     if not chunks:
         return "", []
 
@@ -200,17 +205,29 @@ def generate_notes(chunks: list[str], cfg: Config) -> tuple[str, list[str]]:
         )
 
     if len(chunks) == 1:
-        with _console.status(f"[dim]Generating notes via {cfg.model}...[/dim]", spinner="dots"):
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[dim]{task.description}[/dim]"),
+            transient=True,
+            console=_console,
+        ) as bar:
+            bar.add_task(f"Generating via {cfg.model}", total=None)
             raw = _call_with_retry(cfg, _make_messages(chunks[0], fmt_suffix))
-            return _extract_tags(raw)
+        return _extract_tags(raw)
 
     results: list[str | None] = [None] * len(chunks)
-    max_workers = min(len(chunks), cfg.max_concurrent)
+    workers = max_chunk_workers if max_chunk_workers > 0 else min(len(chunks), cfg.max_concurrent)
 
-    with _console.status(
-        f"[dim]Generating notes ({len(chunks)} chunks) via {cfg.model}...[/dim]", spinner="dots"
-    ):
-        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[dim]{task.description}[/dim]"),
+        BarColumn(bar_width=30),
+        TaskProgressColumn(),
+        transient=True,
+        console=_console,
+    ) as bar:
+        task = bar.add_task(f"Generating via {cfg.model}", total=len(chunks))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
             future_to_idx = {
                 pool.submit(_call_with_retry, cfg, _make_messages(chunk, fmt_suffix)): i
                 for i, chunk in enumerate(chunks)
@@ -218,6 +235,7 @@ def generate_notes(chunks: list[str], cfg: Config) -> tuple[str, list[str]]:
             for future in as_completed(future_to_idx):
                 idx = future_to_idx[future]
                 results[idx] = future.result()
+                bar.advance(task)
 
     all_tags: list[str] = []
     clean_parts: list[str] = []

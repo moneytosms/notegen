@@ -30,8 +30,8 @@ def test_rich_help_contains_key_sections(capsys):
     out = capsys.readouterr().out
     assert "config init" in out
     assert "config open" in out
-    assert "USAGE" in out
-    assert "OPTIONS" in out
+    assert "COMMANDS" in out
+    assert "SOURCE FLAGS" in out
     assert "CONFIG FILE" in out
 
 

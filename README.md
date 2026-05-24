@@ -13,16 +13,10 @@ pip install notegen
 ## Quick start
 
 ```bash
-# 1. Create config
-notegen config init
+# 1. Run the setup wizard (choose provider, add API key, verify connection)
+notegen setup
 
-# 2. Open config and add your API key
-notegen config open
-
-# 3. Verify everything works
-notegen doctor
-
-# 4. Generate notes
+# 2. Generate notes
 notegen https://youtube.com/watch?v=...
 ```
 
@@ -41,6 +35,9 @@ notegen playlist <playlist-url> [--force] [--force-restart]
 notegen web <url>
 notegen text <file-or-stdin>
 notegen text -                          # stdin
+
+# First-time setup
+notegen setup                           # guided wizard
 
 # Watch a folder — auto-process new .txt/.md files
 notegen watch ./inbox
@@ -88,7 +85,7 @@ notegen cache clear      # remove ~/.cache/notegen/
 | macOS | `~/.config/notes-gen/config.yaml` |
 | Windows | `%USERPROFILE%\.config\notes-gen\config.yaml` |
 
-Run `notegen config init` to generate a fully-commented template, then `notegen config open` to edit it.
+Run `notegen setup` (recommended) for guided configuration, or `notegen config init` to generate a fully-commented template then `notegen config open` to edit it.
 
 ### Full reference (`~/.config/notes-gen/config.yaml`)
 
@@ -158,7 +155,7 @@ retry_base_delay: 60.0   # seconds; backoff = base * 2^attempt
 | OpenAI | `openai/gpt-4o` |
 | Groq | `groq/llama-3.3-70b-versatile` |
 | Google Gemini | `gemini/gemini-2.0-flash` |
-| NVIDIA NIM | `nvidia_nim/meta/llama-3.1-70b-instruct` |
+| NVIDIA NIM (free tier) | `nvidia_nim/meta/llama-3.1-70b-instruct` |
 | Mistral | `mistral/mistral-large-latest` |
 | Cohere | `cohere/command-r-plus` |
 | Together AI | `together_ai/meta-llama/Llama-3-70b-chat-hf` |
