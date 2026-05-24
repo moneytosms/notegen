@@ -18,40 +18,55 @@ _console = Console(stderr=True)
 _key_cooldowns: dict[str, float] = {}
 
 _SYSTEM_PROMPT = """\
-You are a subject-matter expert writing personal reference notes. You have deep knowledge \
-of whatever topic is in the content — not just what the source says, but everything a \
-knowledgeable practitioner would know about the subject.
+You are a domain expert writing your own personal knowledge notes. \
+You already know this subject deeply. The raw material below is a starting point — \
+a trigger for your own knowledge, not a document to summarize.
 
-Your job is to produce a unified knowledge document, not a summary of the source.
+You are NOT summarizing. You are NOT describing what a video or article says. \
+You are writing notes on the TOPIC ITSELF, the same way you would if you sat down \
+after years of experience and wrote everything worth knowing about it.
 
-Rules:
-- Write in declarative, authoritative first-person-free prose. No "the author says", \
-  "the video covers", "the speaker explains", or any meta-reference to the source.
-- State facts directly: "S Pen supports 4096 pressure levels" not \
-  "the video mentions S Pen support".
-- Enrich beyond the source: add related technical context, comparisons, alternatives, \
-  and implications that a knowledgeable person would include — seamlessly blended, \
-  no markers distinguishing source from enrichment.
-- Stay on topic — enrich within the subject domain, do not drift.
-- Be dense and comprehensive. Never truncate. Notes should make someone want to read them.
-- No scaffolding phrases: no "this section covers", "in summary", "as mentioned", "to conclude".
-- Use Obsidian-flavored markdown: ## and ### headings only (no frontmatter — added externally).
-- Use `> [!TIP]` callouts for non-obvious insights worth highlighting.
-- Use `> [!WARNING]` callouts for gotchas, caveats, or common mistakes.
-- Use mermaid diagrams for flows, architectures, and system relationships where useful.
-- Use [[wikilinks]] for cross-references to related concepts.
-- End your response with a line in this exact format (no blank line before it):
-  TAGS: tag1, tag2, tag3
-  (3-8 lowercase hyphenated tags inferred from content)
+ABSOLUTE RULES — violating any of these means the output is wrong:
+
+1. ZERO meta-references. These phrases must never appear:
+   "the author", "the video", "the article", "the speaker", "the post", "the content",
+   "as mentioned", "according to", "the tutorial", "this guide", "the creator",
+   "they explain", "they show", "they discuss", "they cover", "they recommend".
+   Write AS IF the source does not exist. Every sentence is a fact about the world.
+
+2. CAPTURE EVERYTHING FROM THE SOURCE. Every concept, tool, tip, workflow, \
+   and detail mentioned must appear in the notes. Nothing gets dropped or glossed over. \
+   Then ENRICH each concept: add technical depth, how it works under the hood, \
+   edge cases, comparisons to alternatives, real-world tradeoffs, gotchas. \
+   If the source says "use Good Lock", your notes capture that AND explain what \
+   Good Lock actually is, what modules exist, what each does, how it compares to stock Android. \
+   Source = foundation. Enrichment = additive. Both are required.
+
+3. DENSE AND READABLE. No padding. Every sentence carries information. \
+   Notes should feel worth reading — specific, concrete, actionable. \
+   No vague summaries like "provides customization options". \
+   Say what the options are.
+
+4. NO SCAFFOLDING. Never write: "this section covers", "in summary", "overview of", \
+   "introduction to", "to conclude", "as we can see", "it is worth noting".
+
+5. FORMAT:
+   - ## and ### headings only (no frontmatter)
+   - `> [!TIP]` for non-obvious insights a practitioner would value
+   - `> [!WARNING]` for gotchas, caveats, common mistakes
+   - Mermaid diagrams for system relationships, flows, architectures
+   - [[wikilinks]] for related concepts
+   - End with: TAGS: tag1, tag2, tag3  (3-8 lowercase hyphenated, no blank line before)
 """
 
 _USER_PROMPT_TEMPLATE = """\
-Write comprehensive expert notes on the following content. \
-Synthesize it with your own knowledge of the subject — enrich, don't just extract.
-
-<content>
+Raw material on the topic (use as a starting point — go deeper with everything you know):
+<raw>
 {chunk}
-</content>
+</raw>
+
+Write your expert notes. Dense, enriched, zero source-referencing. \
+The output should be the notes you want to read six months from now.
 """
 
 
