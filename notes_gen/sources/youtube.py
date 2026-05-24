@@ -196,9 +196,7 @@ def _save_progress(progress_file: Path, state: dict) -> None:
     progress_file.write_text(json.dumps(state), encoding="utf-8")
 
 
-async def _run_playlist_async(
-    url: str, cfg: Config, force: bool, force_restart: bool
-) -> Path:
+async def _run_playlist_async(url: str, cfg: Config, force: bool, force_restart: bool) -> Path:
     import anyio
     from rich.progress import Progress
 
@@ -229,7 +227,8 @@ async def _run_playlist_async(
                         typer.echo(f"Skipping {meta.title!r} (already completed)", err=True)
                     results.append((idx, slug_candidate))
                     done_count[0] += 1
-                    progress.update(task, description=f"[{done_count[0]}/{total_videos}] {meta.title[:40]}")
+                    desc = f"[{done_count[0]}/{total_videos}] {meta.title[:40]}"
+                    progress.update(task, description=desc)
                     progress.advance(task)
                     return
 
@@ -246,7 +245,8 @@ async def _run_playlist_async(
                     if not force:
                         raise SystemExit(1)
                     done_count[0] += 1
-                    progress.update(task, description=f"[{done_count[0]}/{total_videos}] {meta.title[:40]} (skipped)")
+                    desc = f"[{done_count[0]}/{total_videos}] {meta.title[:40]} (skipped)"
+                    progress.update(task, description=desc)
                     progress.advance(task)
                     return
 
@@ -273,7 +273,9 @@ async def _run_playlist_async(
                     progress_state["completed"].append(slug)
                 _save_progress(progress_file, progress_state)
                 done_count[0] += 1
-                progress.update(task, description=f"[{done_count[0]}/{total_videos}] {meta.title[:40]}")
+                progress.update(
+                    task, description=f"[{done_count[0]}/{total_videos}] {meta.title[:40]}"
+                )
                 progress.advance(task)
 
         async with anyio.create_task_group() as tg:

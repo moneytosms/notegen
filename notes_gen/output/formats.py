@@ -48,9 +48,7 @@ def _to_plain(notes: str) -> str:
 
 
 def _callout_to_block(tag: str) -> re.Pattern:
-    return re.compile(
-        rf"^> \[!{tag}\]\s*\n((?:^> .*\n?)*)", re.MULTILINE
-    )
+    return re.compile(rf"^> \[!{tag}\]\s*\n((?:^> .*\n?)*)", re.MULTILINE)
 
 
 def _strip_gt(body: str) -> str:

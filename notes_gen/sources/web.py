@@ -86,10 +86,10 @@ def _is_quality_page(content: str) -> bool:
         return False
     paragraphs = len([p for p in content.split("\n\n") if p.strip()])
     list_items = sum(
-        1 for line in content.splitlines()
-        if line.lstrip().startswith(("- ", "* ")) or (
-            len(line) > 2 and line[0].isdigit() and line[1] in ".)"
-        )
+        1
+        for line in content.splitlines()
+        if line.lstrip().startswith(("- ", "* "))
+        or (len(line) > 2 and line[0].isdigit() and line[1] in ".)")
     )
     if list_items == 0:
         return True
@@ -170,7 +170,10 @@ async def _crawl_async(url: str, cfg: Config) -> Path:
                     continue
                 visited.add(current_url)
                 progress.advance(task)
-                progress.update(task, description=f"[{len(visited)}/{cfg.web_max_pages}] {urlparse(current_url).path[:40] or '/'}")
+                path_label = urlparse(current_url).path[:40] or "/"
+                progress.update(
+                    task, description=f"[{len(visited)}/{cfg.web_max_pages}] {path_label}"
+                )
 
                 try:
                     html = await _fetch_page_async(client, current_url)

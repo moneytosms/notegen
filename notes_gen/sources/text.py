@@ -46,7 +46,8 @@ def run_text_pipeline(source: str, cfg: Config) -> Path:
         from notes_gen.processing.dry_run import print_dry_run_summary
 
         title_for_dry = (
-            "stdin-notes" if source == "-"
+            "stdin-notes"
+            if source == "-"
             else Path(source).stem.replace("_", " ").replace("-", " ").title()
         )
         print_dry_run_summary(title_for_dry, source, chunks, cfg.model)

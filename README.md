@@ -50,6 +50,10 @@ notegen video <url> --dry-run
 notegen video <url> --format logseq
 notegen web <url> --format plain
 
+# Extra prompt guidance
+notegen video <url> --prompt "Focus on practical setup steps and specific tool names"
+notegen web <url> -p "Include comparisons to alternatives for every tool mentioned"
+
 # Config
 notegen config init      # create config file
 notegen config open      # open config in your default editor
@@ -72,6 +76,7 @@ notegen cache clear      # remove ~/.cache/notegen/
 | `--no-cache` | Skip cache read/write for this run |
 | `-n / --dry-run` | Print token/cost estimate; skip LLM call |
 | `--format TEXT` | Output format: `obsidian` (default) · `logseq` · `plain` · `roam` |
+| `-p / --prompt TEXT` | Extra instructions appended to the LLM prompt |
 | `--force` | Skip playlist videos without captions instead of aborting |
 | `--force-restart` | Ignore playlist resume file, reprocess all videos |
 
@@ -256,3 +261,26 @@ Obsidian-flavored markdown (default):
 
 - Python ≥ 3.11
 - API key for at least one supported LLM provider
+
+## Development
+
+```bash
+uv sync --dev        # install all deps including dev
+uv run pytest        # run tests
+uv run ruff check .  # lint
+uv run ruff format . # format
+```
+
+### CI
+
+GitHub Actions runs on every push to `main` or `sms/**` branches and on pull requests to `main`.
+
+Pipeline (`.github/workflows/ci.yml`):
+
+| Step | Command |
+|---|---|
+| Format check | `ruff format --check .` |
+| Lint | `ruff check .` |
+| Test | `pytest tests/ -q --tb=short` |
+
+Matrix: Python 3.11 and 3.12 on `ubuntu-latest`.

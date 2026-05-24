@@ -143,7 +143,9 @@ def test_run_web_crawl_single_page(tmp_path):
     mock_client = _make_async_client_mock(FIXTURE_HTML)
 
     with patch("notes_gen.sources.web.httpx.AsyncClient", return_value=mock_client):
-        with patch("notes_gen.sources.web.generate_notes", return_value=("## Notes\n\nContent.", [])):
+        with patch(
+            "notes_gen.sources.web.generate_notes", return_value=("## Notes\n\nContent.", [])
+        ):
             output_path = run_web_crawl_pipeline("https://example.com/asyncio", cfg)
 
     assert output_path.exists()
@@ -154,7 +156,9 @@ def test_run_web_crawl_respects_max_pages(tmp_path):
     mock_client = _make_async_client_mock(FIXTURE_HTML)
 
     with patch("notes_gen.sources.web.httpx.AsyncClient", return_value=mock_client):
-        with patch("notes_gen.sources.web.generate_notes", return_value=("## Notes\n\nContent.", [])):
+        with patch(
+            "notes_gen.sources.web.generate_notes", return_value=("## Notes\n\nContent.", [])
+        ):
             run_web_crawl_pipeline("https://example.com/", cfg)
 
     # get called at most max_pages times

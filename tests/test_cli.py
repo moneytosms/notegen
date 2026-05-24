@@ -302,8 +302,14 @@ def test_dry_run_flag_on_video_command(tmp_path):
         mock_api.return_value.fetch.return_value = transcript
         result = runner.invoke(
             app,
-            ["video", "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-             "--output-dir", str(tmp_path), "--dry-run", "--no-cache"],
+            [
+                "video",
+                "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+                "--output-dir",
+                str(tmp_path),
+                "--dry-run",
+                "--no-cache",
+            ],
         )
 
     mock_llm.assert_not_called()

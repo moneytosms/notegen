@@ -117,7 +117,9 @@ def test_run_video_pipeline_slug_filename(mock_yt_api, mock_ytdl, tmp_path):
 
     cfg = Config(output_dir=tmp_path, cache=False)
 
-    with patch("notes_gen.sources.youtube.generate_notes", return_value=("## Notes\n\nContent.", [])):
+    with patch(
+        "notes_gen.sources.youtube.generate_notes", return_value=("## Notes\n\nContent.", [])
+    ):
         output_path = run_video_pipeline("https://www.youtube.com/watch?v=dQw4w9WgXcQ", cfg)
 
     assert output_path.name == "python-asyncio-tutorial.md"
@@ -170,7 +172,9 @@ def test_run_playlist_pipeline_creates_index(mock_yt_api, mock_ytdl, tmp_path):
 
     cfg = Config(output_dir=tmp_path, cache=False)
 
-    with patch("notes_gen.sources.youtube.generate_notes", return_value=("## Notes\n\nContent.", [])):
+    with patch(
+        "notes_gen.sources.youtube.generate_notes", return_value=("## Notes\n\nContent.", [])
+    ):
         index_path = run_playlist_pipeline("https://youtube.com/playlist?list=PL123", cfg)
 
     assert index_path.exists()
@@ -193,7 +197,9 @@ def test_run_playlist_pipeline_skips_on_force(mock_yt_api, mock_ytdl, tmp_path):
     cfg = Config(output_dir=tmp_path, cache=False)
 
     # With force=True, no-caption videos are skipped, pipeline continues
-    with patch("notes_gen.sources.youtube.generate_notes", return_value=("## Notes\n\nContent.", [])):
+    with patch(
+        "notes_gen.sources.youtube.generate_notes", return_value=("## Notes\n\nContent.", [])
+    ):
         index_path = run_playlist_pipeline(
             "https://youtube.com/playlist?list=PL123", cfg, force=True
         )
@@ -254,7 +260,9 @@ def test_playlist_resume_skips_completed(mock_yt_api, mock_ytdl, tmp_path):
 
     mock_yt_api.return_value.fetch.side_effect = counting_fetch
 
-    with patch("notes_gen.sources.youtube.generate_notes", return_value=("## Notes\n\nContent.", [])):
+    with patch(
+        "notes_gen.sources.youtube.generate_notes", return_value=("## Notes\n\nContent.", [])
+    ):
         run_playlist_pipeline("https://youtube.com/playlist?list=PL123", cfg)
 
     # only 1 transcript fetch (second video); first was skipped

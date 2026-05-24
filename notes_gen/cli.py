@@ -24,44 +24,64 @@ app.add_typer(config_app, name="config")
 app.add_typer(cache_app, name="cache")
 
 _KNOWN_SUBCOMMANDS = {
-    "video", "playlist", "web", "text", "config", "cache", "auto", "doctor", "watch", "setup"
+    "video",
+    "playlist",
+    "web",
+    "text",
+    "config",
+    "cache",
+    "auto",
+    "doctor",
+    "watch",
+    "setup",
 }
 
 _KNOWN_CONFIG_FIELDS = {
-    "output_dir", "mermaid", "model", "api_keys",
-    "max_concurrent", "web_max_pages", "web_max_depth",
-    "max_retries", "retry_base_delay", "verbose", "cache",
-    "max_output_tokens", "merger_similarity_threshold", "output_format",
+    "output_dir",
+    "mermaid",
+    "model",
+    "api_keys",
+    "max_concurrent",
+    "web_max_pages",
+    "web_max_depth",
+    "max_retries",
+    "retry_base_delay",
+    "verbose",
+    "cache",
+    "max_output_tokens",
+    "merger_similarity_threshold",
+    "output_format",
+    "extra_prompt",
 }
 
 _PROVIDER_TEST_MODELS = {
-    "anthropic":   "anthropic/claude-haiku-4-5-20251001",
-    "openai":      "openai/gpt-4o-mini",
-    "groq":        "groq/llama-3.3-70b-versatile",
-    "gemini":      "gemini/gemini-2.0-flash",
-    "nvidia_nim":  "nvidia_nim/meta/llama-3.3-70b-instruct",
-    "mistral":     "mistral/mistral-small-latest",
-    "deepseek":    "deepseek/deepseek-chat",
+    "anthropic": "anthropic/claude-haiku-4-5-20251001",
+    "openai": "openai/gpt-4o-mini",
+    "groq": "groq/llama-3.3-70b-versatile",
+    "gemini": "gemini/gemini-2.0-flash",
+    "nvidia_nim": "nvidia_nim/meta/llama-3.3-70b-instruct",
+    "mistral": "mistral/mistral-small-latest",
+    "deepseek": "deepseek/deepseek-chat",
     "together_ai": "together_ai/meta-llama/Llama-3-70b-chat-hf",
-    "ollama":      "ollama/llama3",
-    "xai":         "xai/grok-2",
-    "cohere":      "cohere/command-r-plus",
-    "perplexity":  "perplexity/sonar",
+    "ollama": "ollama/llama3",
+    "xai": "xai/grok-2",
+    "cohere": "cohere/command-r-plus",
+    "perplexity": "perplexity/sonar",
 }
 
 _PROVIDER_LIST = [
-    ("groq",        "free tier, fast (recommended)"),
-    ("nvidia_nim",  "free tier — build.nvidia.com"),
-    ("gemini",      "free tier"),
-    ("anthropic",   "paid"),
-    ("openai",      "paid"),
-    ("mistral",     "paid"),
-    ("deepseek",    "paid"),
+    ("groq", "free tier, fast (recommended)"),
+    ("nvidia_nim", "free tier — build.nvidia.com"),
+    ("gemini", "free tier"),
+    ("anthropic", "paid"),
+    ("openai", "paid"),
+    ("mistral", "paid"),
+    ("deepseek", "paid"),
     ("together_ai", "paid"),
-    ("xai",         "paid"),
-    ("cohere",      "paid"),
-    ("perplexity",  "paid"),
-    ("ollama",      "local, no key needed"),
+    ("xai", "paid"),
+    ("cohere", "paid"),
+    ("perplexity", "paid"),
+    ("ollama", "local, no key needed"),
 ]
 
 
@@ -186,9 +206,7 @@ def config_validate() -> None:
     elif has_env:
         _pass(f"API key found via {env_var} env var")
     else:
-        _fail(
-            f"No API key for provider {provider!r} — add to config or set {env_var}"
-        )
+        _fail(f"No API key for provider {provider!r} — add to config or set {env_var}")
 
     console.print()
     if ok:
@@ -220,7 +238,7 @@ def config_show() -> None:
 @app.command()
 def doctor(
     provider: Optional[str] = typer.Option(
-        None, "--provider", "-p", help="Test a specific provider (overrides config model)"
+        None, "--provider", help="Test a specific provider (overrides config model)"
     ),
 ) -> None:
     """Health check: validate config + make a real test API call."""
@@ -235,7 +253,9 @@ def doctor(
     cfg = load_config(DEFAULT_CONFIG_PATH)
 
     if provider:
-        cfg = merge_cli_overrides(cfg, model=_PROVIDER_TEST_MODELS.get(provider, f"{provider}/unknown"))
+        cfg = merge_cli_overrides(
+            cfg, model=_PROVIDER_TEST_MODELS.get(provider, f"{provider}/unknown")
+        )
 
     # run config validate inline
     import os
@@ -255,9 +275,8 @@ def doctor(
         _fail("Config missing — run: notegen setup")
         raise typer.Exit(1)
 
-    raw: dict = {}
     try:
-        raw = yaml.safe_load(DEFAULT_CONFIG_PATH.read_text(encoding="utf-8")) or {}
+        yaml.safe_load(DEFAULT_CONFIG_PATH.read_text(encoding="utf-8"))
         _pass("Valid YAML")
     except Exception as e:
         _fail(f"Invalid YAML: {e}")
@@ -266,14 +285,11 @@ def doctor(
     model = cfg.model
     if "/" not in str(model):
         _fail(f"Model missing provider prefix: {model!r}")
-        ok = False
     else:
         _pass(f"Model: {model}")
 
     prov = str(model).split("/")[0]
-    all_keys = [
-        k for k in raw.get("api_keys", {}).get(prov, []) if k and not str(k).startswith("#")
-    ]
+    all_keys = [k for k in cfg.api_keys.get(prov, []) if k and not k.startswith("#")]
     env_var = f"NOTEGEN_{prov.upper().replace('-', '_').replace('/', '_')}_KEY"
     has_env = bool(os.environ.get(env_var))
     if all_keys:
@@ -333,15 +349,24 @@ def video(
     no_cache: bool = typer.Option(False, "--no-cache"),
     dry_run: bool = typer.Option(False, "--dry-run", "-n", help="Print estimate; skip LLM"),
     fmt: Optional[str] = typer.Option(None, "--format", help="obsidian|logseq|plain|roam"),
+    prompt: Optional[str] = typer.Option(
+        None, "--prompt", "-p", help="Extra instructions for LLM prompt"
+    ),
 ) -> None:
     """Generate notes from a YouTube video."""
     from notes_gen.sources.youtube import run_video_pipeline
 
     cfg = load_config()
     cfg = merge_cli_overrides(
-        cfg, output_dir=output_dir, model=model, mermaid=not no_mermaid,
-        verbose=verbose, cache=not no_cache, dry_run=dry_run or None,
+        cfg,
+        output_dir=output_dir,
+        model=model,
+        mermaid=not no_mermaid,
+        verbose=verbose,
+        cache=not no_cache,
+        dry_run=dry_run or None,
         output_format=fmt,
+        extra_prompt=prompt,
     )
     output_path = run_video_pipeline(url, cfg)
     typer.echo(f"Notes written to {output_path}")
@@ -359,15 +384,24 @@ def playlist(
     no_cache: bool = typer.Option(False, "--no-cache"),
     dry_run: bool = typer.Option(False, "--dry-run", "-n", help="Print estimate; skip LLM"),
     fmt: Optional[str] = typer.Option(None, "--format", help="obsidian|logseq|plain|roam"),
+    prompt: Optional[str] = typer.Option(
+        None, "--prompt", "-p", help="Extra instructions for LLM prompt"
+    ),
 ) -> None:
     """Generate notes from a YouTube playlist."""
     from notes_gen.sources.youtube import run_playlist_pipeline
 
     cfg = load_config()
     cfg = merge_cli_overrides(
-        cfg, output_dir=output_dir, model=model, mermaid=not no_mermaid,
-        verbose=verbose, cache=not no_cache, dry_run=dry_run or None,
+        cfg,
+        output_dir=output_dir,
+        model=model,
+        mermaid=not no_mermaid,
+        verbose=verbose,
+        cache=not no_cache,
+        dry_run=dry_run or None,
         output_format=fmt,
+        extra_prompt=prompt,
     )
     index_path = run_playlist_pipeline(url, cfg, force=force, force_restart=force_restart)
     typer.echo(f"Playlist notes written to {index_path.parent}")
@@ -383,15 +417,24 @@ def web(
     no_cache: bool = typer.Option(False, "--no-cache"),
     dry_run: bool = typer.Option(False, "--dry-run", "-n", help="Print estimate; skip LLM"),
     fmt: Optional[str] = typer.Option(None, "--format", help="obsidian|logseq|plain|roam"),
+    prompt: Optional[str] = typer.Option(
+        None, "--prompt", "-p", help="Extra instructions for LLM prompt"
+    ),
 ) -> None:
     """Generate notes from a web page (crawls same-domain links)."""
     from notes_gen.sources.web import run_web_crawl_pipeline
 
     cfg = load_config()
     cfg = merge_cli_overrides(
-        cfg, output_dir=output_dir, model=model, mermaid=not no_mermaid,
-        verbose=verbose, cache=not no_cache, dry_run=dry_run or None,
+        cfg,
+        output_dir=output_dir,
+        model=model,
+        mermaid=not no_mermaid,
+        verbose=verbose,
+        cache=not no_cache,
+        dry_run=dry_run or None,
         output_format=fmt,
+        extra_prompt=prompt,
     )
     output_path = run_web_crawl_pipeline(url, cfg)
     typer.echo(f"Notes written to {output_path}")
@@ -407,15 +450,24 @@ def text(
     no_cache: bool = typer.Option(False, "--no-cache"),
     dry_run: bool = typer.Option(False, "--dry-run", "-n", help="Print estimate; skip LLM"),
     fmt: Optional[str] = typer.Option(None, "--format", help="obsidian|logseq|plain|roam"),
+    prompt: Optional[str] = typer.Option(
+        None, "--prompt", "-p", help="Extra instructions for LLM prompt"
+    ),
 ) -> None:
     """Generate notes from a text file or stdin."""
     from notes_gen.sources.text import run_text_pipeline
 
     cfg = load_config()
     cfg = merge_cli_overrides(
-        cfg, output_dir=output_dir, model=model, mermaid=not no_mermaid,
-        verbose=verbose, cache=not no_cache, dry_run=dry_run or None,
+        cfg,
+        output_dir=output_dir,
+        model=model,
+        mermaid=not no_mermaid,
+        verbose=verbose,
+        cache=not no_cache,
+        dry_run=dry_run or None,
         output_format=fmt,
+        extra_prompt=prompt,
     )
     output_path = run_text_pipeline(source, cfg)
     typer.echo(f"Notes written to {output_path}")
@@ -432,13 +484,22 @@ def auto(
     no_cache: bool = typer.Option(False, "--no-cache"),
     dry_run: bool = typer.Option(False, "--dry-run", "-n", help="Print estimate; skip LLM"),
     fmt: Optional[str] = typer.Option(None, "--format", help="obsidian|logseq|plain|roam"),
+    prompt: Optional[str] = typer.Option(
+        None, "--prompt", "-p", help="Extra instructions for LLM prompt"
+    ),
 ) -> None:
     """Auto-detect source type and generate notes."""
     cfg = load_config()
     cfg = merge_cli_overrides(
-        cfg, output_dir=output_dir, model=model, mermaid=not no_mermaid,
-        verbose=verbose, cache=not no_cache, dry_run=dry_run or None,
+        cfg,
+        output_dir=output_dir,
+        model=model,
+        mermaid=not no_mermaid,
+        verbose=verbose,
+        cache=not no_cache,
+        dry_run=dry_run or None,
         output_format=fmt,
+        extra_prompt=prompt,
     )
     _run_auto(source, cfg, force=force)
 
@@ -468,37 +529,29 @@ def watch(
 
 
 def _merge_config(
-    path: "Path",
+    path: Path,
     provider: str,
     model: str,
     output_dir: str,
-    new_keys: "list[str]",
+    new_keys: list[str],
 ) -> None:
-    """Merge new settings into existing config without overwriting existing keys."""
-    import yaml as _yaml
-
-    if path.exists():
-        raw = _yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    else:
-        raw = {}
+    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {} if path.exists() else {}
 
     if model:
         raw["model"] = model
     if output_dir and output_dir != "~/notes":
         raw["output_dir"] = output_dir
 
-    if "api_keys" not in raw or not isinstance(raw["api_keys"], dict):
+    if not isinstance(raw.get("api_keys"), dict):
         raw["api_keys"] = {}
-    if provider not in raw["api_keys"] or not isinstance(raw["api_keys"][provider], list):
+    if not isinstance(raw["api_keys"].get(provider), list):
         raw["api_keys"][provider] = []
 
     existing = set(raw["api_keys"][provider])
-    for k in new_keys:
-        if k and k not in existing:
-            raw["api_keys"][provider].append(k)
+    raw["api_keys"][provider].extend(k for k in new_keys if k and k not in existing)
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(_yaml.dump(raw, default_flow_style=False, allow_unicode=True), encoding="utf-8")
+    path.write_text(yaml.dump(raw, default_flow_style=False, allow_unicode=True), encoding="utf-8")
 
 
 @app.command()
@@ -571,24 +624,22 @@ def setup() -> None:
                 extra_providers.append((extra_prov, extra_keys))
 
     # Step 6: Write config
-    if DEFAULT_CONFIG_PATH.exists():
-        _merge_config(DEFAULT_CONFIG_PATH, provider, model, output_dir, all_new_keys)
-        for ep, ek in extra_providers:
-            _merge_config(DEFAULT_CONFIG_PATH, ep, "", "", ek)
-        console.print(f"\n[green]✓[/] Config updated: {DEFAULT_CONFIG_PATH}")
-    else:
+    existed = DEFAULT_CONFIG_PATH.exists()
+    if not existed:
         DEFAULT_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
         DEFAULT_CONFIG_PATH.write_text(CONFIG_TEMPLATE, encoding="utf-8")
-        _merge_config(DEFAULT_CONFIG_PATH, provider, model, output_dir, all_new_keys)
-        for ep, ek in extra_providers:
-            _merge_config(DEFAULT_CONFIG_PATH, ep, "", "", ek)
-        console.print(f"\n[green]✓[/] Config created: {DEFAULT_CONFIG_PATH}")
+    _merge_config(DEFAULT_CONFIG_PATH, provider, model, output_dir, all_new_keys)
+    for ep, ek in extra_providers:
+        _merge_config(DEFAULT_CONFIG_PATH, ep, "", "", ek)
+    action = "updated" if existed else "created"
+    console.print(f"\n[green]✓[/] Config {action}: {DEFAULT_CONFIG_PATH}")
 
     # Step 7: Run doctor
     console.print("\nRun doctor to verify connection? [Y/n]: ", end="")
     if input().strip().lower() != "n":
         try:
             import time
+
             import litellm
 
             cfg = load_config(DEFAULT_CONFIG_PATH)
@@ -664,12 +715,13 @@ def _show_rich_help() -> None:
     t.add_row("--format TEXT", "obsidian (default) | logseq | plain | roam")
     t.add_row("--force", "skip playlist videos without captions")
     t.add_row("--force-restart", "ignore playlist resume file, reprocess all")
+    t.add_row("-p / --prompt TEXT", "extra instructions appended to LLM prompt")
     console.print(t)
 
     console.print("\n[bold]SETUP & DIAGNOSTICS[/]")
     t = _table()
     t.add_row("notegen setup", "interactive first-run wizard")
-    t.add_row("notegen doctor [-p PROVIDER]", "config check + real API call")
+    t.add_row("notegen doctor [--provider PROVIDER]", "config check + real API call")
     console.print(t)
 
     console.print("\n[bold]CONFIG[/]")

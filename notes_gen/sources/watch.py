@@ -28,9 +28,7 @@ def _load_state(watch_dir: Path) -> set[str]:
 
 def _save_state(watch_dir: Path, processed: set[str]) -> None:
     state_path = watch_dir / _STATE_FILE
-    state_path.write_text(
-        json.dumps({"processed": sorted(processed)}), encoding="utf-8"
-    )
+    state_path.write_text(json.dumps({"processed": sorted(processed)}), encoding="utf-8")
 
 
 def _process_file(path: Path, cfg: Config) -> bool:

@@ -18,30 +18,40 @@ _console = Console(stderr=True)
 _key_cooldowns: dict[str, float] = {}
 
 _SYSTEM_PROMPT = """\
-You are an expert note-taker converting transcripts and articles into structured Obsidian notes.
+You are a subject-matter expert writing personal reference notes. You have deep knowledge \
+of whatever topic is in the content — not just what the source says, but everything a \
+knowledgeable practitioner would know about the subject.
+
+Your job is to produce a unified knowledge document, not a summary of the source.
 
 Rules:
-- Use Obsidian-flavored markdown: YAML frontmatter (omit here — added externally),
-  ## and ### headings only
-- Use `> [!TIP]` and `> [!WARNING]` callouts for important insights
-- Use mermaid diagrams for flows and architectures when appropriate
-- Use [[wikilinks]] for cross-references to related concepts
-- Be comprehensive — never truncate to hit a length limit
-- Write for a technical audience learning the subject
+- Write in declarative, authoritative first-person-free prose. No "the author says", \
+  "the video covers", "the speaker explains", or any meta-reference to the source.
+- State facts directly: "S Pen supports 4096 pressure levels" not \
+  "the video mentions S Pen support".
+- Enrich beyond the source: add related technical context, comparisons, alternatives, \
+  and implications that a knowledgeable person would include — seamlessly blended, \
+  no markers distinguishing source from enrichment.
+- Stay on topic — enrich within the subject domain, do not drift.
+- Be dense and comprehensive. Never truncate. Notes should make someone want to read them.
+- No scaffolding phrases: no "this section covers", "in summary", "as mentioned", "to conclude".
+- Use Obsidian-flavored markdown: ## and ### headings only (no frontmatter — added externally).
+- Use `> [!TIP]` callouts for non-obvious insights worth highlighting.
+- Use `> [!WARNING]` callouts for gotchas, caveats, or common mistakes.
+- Use mermaid diagrams for flows, architectures, and system relationships where useful.
+- Use [[wikilinks]] for cross-references to related concepts.
 - End your response with a line in this exact format (no blank line before it):
   TAGS: tag1, tag2, tag3
   (3-8 lowercase hyphenated tags inferred from content)
 """
 
 _USER_PROMPT_TEMPLATE = """\
-Convert the following content into structured Obsidian notes:
+Write comprehensive expert notes on the following content. \
+Synthesize it with your own knowledge of the subject — enrich, don't just extract.
 
 <content>
 {chunk}
 </content>
-
-Produce well-organized markdown notes with clear headings, key concepts,
-code examples where relevant, and callouts for important points.
 """
 
 
@@ -149,8 +159,10 @@ def _extract_tags(text: str) -> tuple[str, list[str]]:
     return clean, tags
 
 
-def _make_messages(chunk: str, format_suffix: str = "") -> list[dict]:
+def _make_messages(chunk: str, format_suffix: str = "", extra_prompt: str = "") -> list[dict]:
     system = _SYSTEM_PROMPT + format_suffix
+    if extra_prompt:
+        system += f"\n\nAdditional instructions:\n{extra_prompt}"
     return [
         {"role": "system", "content": system},
         {"role": "user", "content": _USER_PROMPT_TEMPLATE.format(chunk=chunk)},
@@ -193,6 +205,7 @@ def generate_notes(
     from notes_gen.output.formats import format_prompt_suffix
 
     fmt_suffix = format_prompt_suffix(cfg.output_format)
+    extra = cfg.extra_prompt
 
     if cfg.verbose:
         import tiktoken
@@ -212,7 +225,7 @@ def generate_notes(
             console=_console,
         ) as bar:
             bar.add_task(f"Generating via {cfg.model}", total=None)
-            raw = _call_with_retry(cfg, _make_messages(chunks[0], fmt_suffix))
+            raw = _call_with_retry(cfg, _make_messages(chunks[0], fmt_suffix, extra))
         return _extract_tags(raw)
 
     results: list[str | None] = [None] * len(chunks)
@@ -229,7 +242,7 @@ def generate_notes(
         task = bar.add_task(f"Generating via {cfg.model}", total=len(chunks))
         with ThreadPoolExecutor(max_workers=workers) as pool:
             future_to_idx = {
-                pool.submit(_call_with_retry, cfg, _make_messages(chunk, fmt_suffix)): i
+                pool.submit(_call_with_retry, cfg, _make_messages(chunk, fmt_suffix, extra)): i
                 for i, chunk in enumerate(chunks)
             }
             for future in as_completed(future_to_idx):

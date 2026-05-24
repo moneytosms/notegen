@@ -59,6 +59,7 @@ select = ["E", "F", "I"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["E501", "F841"]
+"notes_gen/cli.py" = ["E402"]  # logging must suppress litellm before notes_gen import
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

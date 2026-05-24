@@ -29,11 +29,13 @@ def _read(key: str) -> str | None:
 def _write(key: str, content: str, url: str) -> None:
     _CACHE_DIR.mkdir(parents=True, exist_ok=True)
     _cache_file(key).write_text(
-        json.dumps({
-            "content": content,
-            "url": url,
-            "cached_at": datetime.now(timezone.utc).isoformat(),
-        }),
+        json.dumps(
+            {
+                "content": content,
+                "url": url,
+                "cached_at": datetime.now(timezone.utc).isoformat(),
+            }
+        ),
         encoding="utf-8",
     )
 

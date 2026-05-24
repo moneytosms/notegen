@@ -29,6 +29,7 @@ class Config:
     max_output_tokens: int = 0
     merger_similarity_threshold: float = 0.7
     output_format: str = "obsidian"
+    extra_prompt: str = ""
 
     def __post_init__(self) -> None:
         if self.output_dir is None:
@@ -66,6 +67,7 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> Config:
         "max_output_tokens",
         "merger_similarity_threshold",
         "output_format",
+        "extra_prompt",
     )
     for f in scalar_fields:
         if f in raw:
@@ -89,6 +91,7 @@ def merge_cli_overrides(
     cache: Optional[bool] = None,
     dry_run: Optional[bool] = None,
     output_format: Optional[str] = None,
+    extra_prompt: Optional[str] = None,
 ) -> Config:
     overrides: dict = {}
     if output_dir is not None:
@@ -105,6 +108,8 @@ def merge_cli_overrides(
         overrides["dry_run"] = dry_run
     if output_format is not None:
         overrides["output_format"] = output_format
+    if extra_prompt is not None:
+        overrides["extra_prompt"] = extra_prompt
     return replace(cfg, **overrides)
 
 
