@@ -69,6 +69,7 @@ notegen cache clear      # remove ~/.cache/notegen/
 
 | Flag | Description |
 |---|---|
+| `--version` | Print version and exit |
 | `-o / --output-dir PATH` | Override output directory |
 | `-m / --model TEXT` | LiteLLM model string (e.g. `groq/llama-3.3-70b-versatile`) |
 | `-v / --verbose` | Show chunk count, token usage, model/key selection, crawl status |

@@ -85,6 +85,24 @@ _PROVIDER_LIST = [
 ]
 
 
+def _get_version() -> str:
+    import tomllib
+    from importlib.metadata import version as _ver
+
+    pyproject = Path(__file__).resolve().parent.parent / "pyproject.toml"
+    if pyproject.exists():
+        try:
+            data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+            return str(data["project"]["version"])
+        except Exception:
+            pass
+
+    try:
+        return _ver("notegen")
+    except Exception:
+        return "dev"
+
+
 def _run_auto(source: str, cfg: Config, force: bool = False) -> None:
     if "youtube.com/playlist" in source or ("list=" in source and "youtube.com" in source):
         from notes_gen.sources.youtube import run_playlist_pipeline
@@ -676,16 +694,10 @@ _ASCII_ART = """\
 
 
 def _show_rich_help() -> None:
-    from importlib.metadata import version as _ver
-
     from rich.console import Console
     from rich.table import Table
 
-    try:
-        ver = _ver("notegen")
-    except Exception:
-        ver = "dev"
-
+    ver = _get_version()
     console = Console()
     console.print(f"\n[#50C878]{_ASCII_ART}[/]")
     console.print(f"[dim]v{ver}[/]  YouTube · playlists · web pages → rich Obsidian notes\n")
@@ -714,6 +726,7 @@ def _show_rich_help() -> None:
 
     console.print("\n[bold]SOURCE FLAGS[/] [dim](video · playlist · web · text · auto)[/]")
     t = _table(flag_col=True)
+    t.add_row("--version", "print version and exit")
     t.add_row("-o / --output-dir PATH", "override output directory")
     t.add_row("-m / --model TEXT", "LiteLLM model  e.g. [green]groq/llama-3.3-70b-versatile[/]")
     t.add_row("-v / --verbose", "show chunk count, token usage, crawl status")
@@ -768,6 +781,9 @@ def main() -> None:
     args = sys.argv[1:]
     if not args or args == ["--help"] or args == ["-h"]:
         _show_rich_help()
+        return
+    if args == ["--version"] or args == ["-V"]:
+        typer.echo(f"notegen {_get_version()}")
         return
     if args and not args[0].startswith("-") and args[0] not in _KNOWN_SUBCOMMANDS:
         sys.argv.insert(1, "auto")

@@ -25,6 +25,15 @@ def test_no_args_invokes_rich_display(monkeypatch):
     mock_help.assert_called_once()
 
 
+def test_version_flag_prints_version(monkeypatch, capsys):
+    import sys
+
+    monkeypatch.setattr(sys, "argv", ["notegen", "--version"])
+    monkeypatch.setattr("notes_gen.cli._get_version", lambda: "2.3.0")
+    main()
+    assert capsys.readouterr().out.strip() == "notegen 2.3.0"
+
+
 def test_rich_help_contains_key_sections(capsys):
     _show_rich_help()
     out = capsys.readouterr().out
