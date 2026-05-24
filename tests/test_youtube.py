@@ -38,6 +38,16 @@ def _make_yt_info():
     }
 
 
+def _setup_transcript_mock(mock_yt_api, transcript_data):
+    """Wire api.list() -> find_transcript() -> fetch() returning transcript_data."""
+    mock_transcript = MagicMock()
+    mock_transcript.fetch.return_value = transcript_data
+    mock_tlist = MagicMock()
+    mock_tlist.find_transcript.return_value = mock_transcript
+    mock_yt_api.return_value.list.return_value = mock_tlist
+    return mock_tlist, mock_transcript
+
+
 @patch("notes_gen.sources.youtube.YoutubeDL")
 @patch("notes_gen.sources.youtube.YouTubeTranscriptApi")
 def test_fetch_video_returns_metadata_and_transcript(mock_yt_api, mock_ytdl):
@@ -45,7 +55,7 @@ def test_fetch_video_returns_metadata_and_transcript(mock_yt_api, mock_ytdl):
         return_value=MagicMock(extract_info=MagicMock(return_value=_make_yt_info()))
     )
     mock_ytdl.return_value.__exit__ = MagicMock(return_value=False)
-    mock_yt_api.return_value.fetch.return_value = _make_transcript_list()
+    _setup_transcript_mock(mock_yt_api, _make_transcript_list())
 
     meta, transcript = fetch_video("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
 
@@ -62,7 +72,7 @@ def test_fetch_video_accepts_object_transcript_snippets(mock_yt_api, mock_ytdl):
         return_value=MagicMock(extract_info=MagicMock(return_value=_make_yt_info()))
     )
     mock_ytdl.return_value.__exit__ = MagicMock(return_value=False)
-    mock_yt_api.return_value.fetch.return_value = _make_object_transcript_list()
+    _setup_transcript_mock(mock_yt_api, _make_object_transcript_list())
 
     _, transcript = fetch_video("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
 
@@ -78,11 +88,75 @@ def test_fetch_video_no_captions_raises(mock_yt_api, mock_ytdl):
         return_value=MagicMock(extract_info=MagicMock(return_value=_make_yt_info()))
     )
     mock_ytdl.return_value.__exit__ = MagicMock(return_value=False)
-    mock_yt_api.return_value.fetch.side_effect = TranscriptsDisabled("dQw4w9WgXcQ")
+    mock_yt_api.return_value.list.side_effect = TranscriptsDisabled("dQw4w9WgXcQ")
 
     with pytest.raises(SystemExit) as exc_info:
         fetch_video("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
     assert exc_info.value.code != 0
+
+
+@patch("notes_gen.sources.youtube.YoutubeDL")
+@patch("notes_gen.sources.youtube.YouTubeTranscriptApi")
+def test_fetch_video_hindi_transcript_translated(mock_yt_api, mock_ytdl):
+    """Hindi transcript (no English available) is translated to English."""
+    from youtube_transcript_api._errors import NoTranscriptFound
+
+    mock_ytdl.return_value.__enter__ = MagicMock(
+        return_value=MagicMock(extract_info=MagicMock(return_value=_make_yt_info()))
+    )
+    mock_ytdl.return_value.__exit__ = MagicMock(return_value=False)
+
+    mock_translated = MagicMock()
+    mock_translated.fetch.return_value = _make_transcript_list()
+    mock_hindi = MagicMock()
+    mock_hindi.translate.return_value = mock_translated
+
+    mock_tlist = MagicMock()
+
+    def find_transcript_side_effect(langs):
+        if any(lang.startswith("en") for lang in langs):
+            raise NoTranscriptFound("dQw4w9WgXcQ", langs, [])
+        return mock_hindi
+
+    mock_tlist.find_transcript.side_effect = find_transcript_side_effect
+    mock_yt_api.return_value.list.return_value = mock_tlist
+
+    _, transcript = fetch_video("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+
+    mock_hindi.translate.assert_called_once_with("en")
+    assert "asyncio" in transcript.lower()
+
+
+@patch("notes_gen.sources.youtube.YoutubeDL")
+@patch("notes_gen.sources.youtube.YouTubeTranscriptApi")
+def test_fetch_video_malayalam_transcript_translated(mock_yt_api, mock_ytdl):
+    """Malayalam transcript (no English available) is translated to English."""
+    from youtube_transcript_api._errors import NoTranscriptFound
+
+    mock_ytdl.return_value.__enter__ = MagicMock(
+        return_value=MagicMock(extract_info=MagicMock(return_value=_make_yt_info()))
+    )
+    mock_ytdl.return_value.__exit__ = MagicMock(return_value=False)
+
+    mock_translated = MagicMock()
+    mock_translated.fetch.return_value = _make_transcript_list()
+    mock_ml = MagicMock()
+    mock_ml.translate.return_value = mock_translated
+
+    mock_tlist = MagicMock()
+
+    def find_transcript_side_effect(langs):
+        if any(lang.startswith("en") for lang in langs):
+            raise NoTranscriptFound("dQw4w9WgXcQ", langs, [])
+        return mock_ml
+
+    mock_tlist.find_transcript.side_effect = find_transcript_side_effect
+    mock_yt_api.return_value.list.return_value = mock_tlist
+
+    _, transcript = fetch_video("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+
+    mock_ml.translate.assert_called_once_with("en")
+    assert "asyncio" in transcript.lower()
 
 
 @patch("notes_gen.sources.youtube.YoutubeDL")
@@ -92,7 +166,7 @@ def test_run_video_pipeline_creates_file(mock_yt_api, mock_ytdl, tmp_path):
         return_value=MagicMock(extract_info=MagicMock(return_value=_make_yt_info()))
     )
     mock_ytdl.return_value.__exit__ = MagicMock(return_value=False)
-    mock_yt_api.return_value.fetch.return_value = _make_transcript_list()
+    _setup_transcript_mock(mock_yt_api, _make_transcript_list())
 
     cfg = Config(output_dir=tmp_path, cache=False)
     notes_content = "## Asyncio\n\nEvent loop is the core."
@@ -113,7 +187,7 @@ def test_run_video_pipeline_slug_filename(mock_yt_api, mock_ytdl, tmp_path):
         return_value=MagicMock(extract_info=MagicMock(return_value=_make_yt_info()))
     )
     mock_ytdl.return_value.__exit__ = MagicMock(return_value=False)
-    mock_yt_api.return_value.fetch.return_value = _make_transcript_list()
+    _setup_transcript_mock(mock_yt_api, _make_transcript_list())
 
     cfg = Config(output_dir=tmp_path, cache=False)
 
@@ -168,7 +242,7 @@ def test_run_playlist_pipeline_creates_index(mock_yt_api, mock_ytdl, tmp_path):
         return_value=MagicMock(extract_info=MagicMock(return_value=_make_playlist_info()))
     )
     mock_ytdl.return_value.__exit__ = MagicMock(return_value=False)
-    mock_yt_api.return_value.fetch.return_value = _make_transcript_list()
+    _setup_transcript_mock(mock_yt_api, _make_transcript_list())
 
     cfg = Config(output_dir=tmp_path, cache=False)
 
@@ -192,11 +266,10 @@ def test_run_playlist_pipeline_skips_on_force(mock_yt_api, mock_ytdl, tmp_path):
         return_value=MagicMock(extract_info=MagicMock(return_value=_make_playlist_info()))
     )
     mock_ytdl.return_value.__exit__ = MagicMock(return_value=False)
-    mock_yt_api.return_value.fetch.side_effect = TranscriptsDisabled("vid001")
+    mock_yt_api.return_value.list.side_effect = TranscriptsDisabled("vid001")
 
     cfg = Config(output_dir=tmp_path, cache=False)
 
-    # With force=True, no-caption videos are skipped, pipeline continues
     with patch(
         "notes_gen.sources.youtube.generate_notes", return_value=("## Notes\n\nContent.", [])
     ):
@@ -216,7 +289,7 @@ def test_run_playlist_pipeline_aborts_without_force(mock_yt_api, mock_ytdl, tmp_
         return_value=MagicMock(extract_info=MagicMock(return_value=_make_playlist_info()))
     )
     mock_ytdl.return_value.__exit__ = MagicMock(return_value=False)
-    mock_yt_api.return_value.fetch.side_effect = TranscriptsDisabled("vid001")
+    mock_yt_api.return_value.list.side_effect = TranscriptsDisabled("vid001")
 
     cfg = Config(output_dir=tmp_path, cache=False)
 
@@ -237,28 +310,27 @@ def test_playlist_resume_skips_completed(mock_yt_api, mock_ytdl, tmp_path):
         return_value=MagicMock(extract_info=MagicMock(return_value=_make_playlist_info()))
     )
     mock_ytdl.return_value.__exit__ = MagicMock(return_value=False)
-    mock_yt_api.return_value.fetch.return_value = _make_transcript_list()
+
+    list_call_count = [0]
+
+    def counting_list(video_id):
+        list_call_count[0] += 1
+        mock_transcript = MagicMock()
+        mock_transcript.fetch.return_value = _make_transcript_list()
+        mock_tlist = MagicMock()
+        mock_tlist.find_transcript.return_value = mock_transcript
+        return mock_tlist
+
+    mock_yt_api.return_value.list.side_effect = counting_list
 
     cfg = Config(output_dir=tmp_path, cache=False)
-    # slug of "Python Tutorial Series" (the playlist title from _make_playlist_info)
     playlist_dir = tmp_path / "python-tutorial-series"
     playlist_dir.mkdir()
 
-    # pre-write progress with first video already done
-    # slug of "Intro to Python" (first video title)
     first_slug = "intro-to-python"
     progress_file = playlist_dir / ".progress.json"
     progress_file.write_text(json.dumps({"completed": [first_slug], "failed": []}))
     (playlist_dir / f"{first_slug}.md").write_text("pre-existing note")
-
-    call_count = 0
-
-    def counting_fetch(video_id):
-        nonlocal call_count
-        call_count += 1
-        return _make_transcript_list()
-
-    mock_yt_api.return_value.fetch.side_effect = counting_fetch
 
     with patch(
         "notes_gen.sources.youtube.generate_notes", return_value=("## Notes\n\nContent.", [])
@@ -266,7 +338,7 @@ def test_playlist_resume_skips_completed(mock_yt_api, mock_ytdl, tmp_path):
         run_playlist_pipeline("https://youtube.com/playlist?list=PL123", cfg)
 
     # only 1 transcript fetch (second video); first was skipped
-    assert call_count == 1
+    assert list_call_count[0] == 1
     assert not progress_file.exists()  # deleted on full success
 
 

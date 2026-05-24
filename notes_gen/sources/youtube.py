@@ -50,10 +50,23 @@ def _transcript_to_text(transcript_list) -> str:
     return " ".join(text_of(item) for item in transcript_list)
 
 
+_TRANSLATABLE_LANGS = ["hi", "ml"]
+
+
 def _fetch_transcript(video_id: str) -> str:
     api = YouTubeTranscriptApi()
-    transcript_list = api.fetch(video_id)
-    return _transcript_to_text(transcript_list)
+    transcript_list = api.list(video_id)  # raises TranscriptsDisabled if no captions at all
+
+    # Prefer English (no translation cost)
+    try:
+        t = transcript_list.find_transcript(["en", "en-US", "en-GB"])
+        return _transcript_to_text(t.fetch())
+    except NoTranscriptFound:
+        pass
+
+    # Fall back to Hindi / Malayalam — translate to English via YouTube's own API
+    t = transcript_list.find_transcript(_TRANSLATABLE_LANGS)  # raises NoTranscriptFound if absent
+    return _transcript_to_text(t.translate("en").fetch())
 
 
 def _video_url(video_id: str) -> str:

@@ -665,6 +665,16 @@ def setup() -> None:
     console.print("\n[green]Setup complete.[/] Run: notegen <url>\n")
 
 
+_ASCII_ART = """\
+ ███╗   ██╗ ██████╗ ████████╗███████╗ ██████╗ ███████╗███╗   ██╗
+ ████╗  ██║██╔═══██╗╚══██╔══╝██╔════╝██╔════╝ ██╔════╝████╗  ██║
+ ██╔██╗ ██║██║   ██║   ██║   █████╗  ██║  ███╗█████╗  ██╔██╗ ██║
+ ██║╚██╗██║██║   ██║   ██║   ██╔══╝  ██║   ██║██╔══╝  ██║╚██╗██║
+ ██║ ╚████║╚██████╔╝   ██║   ███████╗╚██████╔╝███████╗██║ ╚████║
+ ╚═╝  ╚═══╝ ╚═════╝    ╚═╝   ╚══════╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝\
+"""
+
+
 def _show_rich_help() -> None:
     from importlib.metadata import version as _ver
 
@@ -677,10 +687,8 @@ def _show_rich_help() -> None:
         ver = "dev"
 
     console = Console()
-    console.print(
-        f"\n[bold cyan]notegen[/] [dim]v{ver}[/]  —  "
-        "YouTube · playlists · web pages → Obsidian notes\n"
-    )
+    console.print(f"\n[#50C878]{_ASCII_ART}[/]")
+    console.print(f"[dim]v{ver}[/]  YouTube · playlists · web pages → rich Obsidian notes\n")
 
     def _table(flag_col: bool = False) -> Table:
         t = Table(box=None, show_header=False, padding=(0, 2, 0, 2), expand=False)
@@ -741,7 +749,10 @@ def _show_rich_help() -> None:
     console.print("  [dim]Linux/macOS[/]  [green]~/.config/notes-gen/config.yaml[/]")
     win_path = r"%USERPROFILE%\.config\notes-gen\config.yaml"
     console.print(f"  [dim]Windows[/]     [green]{win_path}[/]")
-    console.print("\n  [dim]Free providers: groq · nvidia_nim · gemini[/]\n")
+    console.print("\n  [dim]Free providers: groq · nvidia_nim · gemini[/]")
+    console.print(
+        "  [dim]YouTube languages: English (direct) · Hindi · Malayalam (auto-translated)[/]\n"
+    )
 
 
 def main() -> None:

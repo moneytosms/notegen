@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/moneytosms/notegen/actions/workflows/ci.yml/badge.svg)](https://github.com/moneytosms/notegen/actions/workflows/ci.yml)
 
-Convert YouTube videos, playlists, and web pages into structured Obsidian-flavored markdown notes using LLMs.
+Convert YouTube videos, playlists, and web pages into rich Obsidian-flavored markdown notes using LLMs. Supports English, Hindi, and Malayalam YouTube videos — all notes generated in English.
 
 ## Install
 
@@ -250,12 +250,30 @@ With the defaults (`max_retries: 5`, `retry_base_delay: 60`), the wait sequence 
 
 Obsidian-flavored markdown (default):
 - YAML frontmatter (`title`, `source`, `type`, `tags`, `date`)
-- `##` / `###` headings only
-- `> [!TIP]` / `> [!WARNING]` callouts
-- Mermaid diagrams for flows and architectures
-- `[[wikilinks]]` for cross-references
+- `#` → `##` → `###` heading hierarchy following source narrative
+- `___` horizontal dividers between major topic shifts
+- `> blockquote` for quotes, definitions, memorable statements
+- `$formula$` inline LaTeX · `$$formula$$` block equations
+- Callouts — used where content genuinely warrants them:
+  `> [!TIP]` `> [!NOTE]` `> [!INFO]` `> [!WARNING]` `> [!CAUTION]`
+  `> [!DANGER]` `> [!EXAMPLE]` `> [!QUESTION]` `> [!QUOTE]` `> [!CITE]`
+- Mermaid diagrams for system topology, data flows, architectures
+- Markdown tables for comparisons and feature matrices
+- `[[wikilinks]]` for cross-references to related concepts
+- `**bold**` key terms · `_italic_` emphasis · `` `inline code` `` for commands/flags/values
+- Fenced code blocks with language tags
 - Tags auto-inferred by LLM from content
 - Playlist → folder + `index.md` with wikilinks to each video note
+
+## Language support
+
+YouTube transcripts are fetched and processed in this order:
+
+1. **English** — used directly (`en`, `en-US`, `en-GB`)
+2. **Hindi** (`hi`) — auto-translated to English via YouTube's translation API
+3. **Malayalam** (`ml`) — auto-translated to English via YouTube's translation API
+
+Translation uses YouTube's own built-in API (no extra key or dependency needed). Notes are always written in English regardless of source language. Videos with no captions in any supported language fail with an error (or are skipped in playlists with `--force`).
 
 ## Requirements
 
