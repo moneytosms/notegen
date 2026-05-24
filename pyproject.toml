@@ -1,6 +1,6 @@
 [project]
 name = "notegen"
-version = "2.3.0"
+version = "2.3.1"
 description = "Convert YouTube videos, playlists, and web pages into Obsidian markdown notes using LLMs"
 readme = "README.md"
 license = { text = "MIT" }
