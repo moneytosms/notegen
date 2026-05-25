@@ -5,7 +5,14 @@ import re
 _VALID_FORMATS = {"obsidian", "logseq", "plain", "roam"}
 
 _FORMAT_PROMPTS: dict[str, str] = {
-    "obsidian": "",
+    "obsidian": (
+        "\nOutput format: Obsidian-flavored markdown. "
+        "For tables, always use the following format with leading/trailing pipes and explicit alignment:\n\n"
+        "| Header 1 | Header 2 |\n"
+        "| :------- | :------- |\n"
+        "| Cell 1   | Cell 2   |\n\n"
+        "Rules: pipes at start/end of every row, at least 3 dashes in separator, no empty lines within table, escape pipes in wikilinks: [[Link\\|Alias]]."
+    ),
     "logseq": (
         "\nOutput format: Logseq. Use bullet-based indented structure. "
         "Replace [[wikilinks]] with ((block-refs)) where appropriate. "

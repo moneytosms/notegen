@@ -64,7 +64,8 @@ RULES:
    sentence, switch to bullets. Sub-bullets for detail expanding a single point.
 
    Tables: whenever comparing ≥2 things across ≥2 attributes. Always prefer a table \
-   over comparison prose. Include a header row.
+   over comparison prose. Include a header row and use leading/trailing pipes (`|`) \
+   for every row to ensure compatibility.
 
    Code blocks: anything runnable, copyable, or syntactically exact — commands, configs, \
    pseudocode, API calls, file contents. Always tag the language (```python, ```bash, etc.)

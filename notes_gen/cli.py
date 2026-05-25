@@ -557,7 +557,7 @@ def _merge_config(
 
     if model:
         raw["model"] = model
-    if output_dir and output_dir != "~/notes":
+    if output_dir:
         raw["output_dir"] = output_dir
 
     if not isinstance(raw.get("api_keys"), dict):
@@ -576,33 +576,46 @@ def _merge_config(
 def setup() -> None:
     """Interactive guided setup wizard — configure provider, model, API keys."""
     from rich.console import Console
+    import yaml
 
     console = Console()
     console.print("\n[bold cyan]notegen setup[/] — guided configuration\n")
 
+    # Load existing config for defaults
+    current_raw = {}
+    if DEFAULT_CONFIG_PATH.exists():
+        try:
+            current_raw = yaml.safe_load(DEFAULT_CONFIG_PATH.read_text(encoding="utf-8")) or {}
+        except Exception:
+            pass
+
     # Step 1: Choose provider
+    current_model = current_raw.get("model", "")
+    current_provider = current_model.split("/")[0] if "/" in current_model else "groq"
+    
     console.print("[bold]Available providers:[/]")
     for i, (prov, label) in enumerate(_PROVIDER_LIST, 1):
         console.print(f"  [green]{i:2}[/] {prov:<15} [dim]{label}[/]")
 
-    console.print("\nChoose provider [Enter = groq]: ", end="")
+    console.print(f"\nChoose provider [Enter = {current_provider}]: ", end="")
     choice = input().strip()
     if not choice:
-        provider = "groq"
+        provider = current_provider
     elif choice.isdigit() and 1 <= int(choice) <= len(_PROVIDER_LIST):
         provider = _PROVIDER_LIST[int(choice) - 1][0]
     else:
         provider = choice
 
     # Step 2: Choose model
-    default_model = _PROVIDER_TEST_MODELS.get(provider, f"{provider}/unknown")
+    default_model = current_model if current_model and current_model.startswith(provider) else _PROVIDER_TEST_MODELS.get(provider, f"{provider}/unknown")
     console.print(f"\nModel [Enter = {default_model}]: ", end="")
     model_input = input().strip()
     model = model_input if model_input else default_model
 
     # Step 3: Output directory
-    console.print("\nOutput directory [Enter = ~/notes]: ", end="")
-    output_dir = input().strip() or "~/notes"
+    current_out = current_raw.get("output_dir", "~/notes")
+    console.print(f"\nOutput directory [Enter = {current_out}]: ", end="")
+    output_dir = input().strip() or current_out
 
     # Step 4: API keys
     all_new_keys: list[str] = []
