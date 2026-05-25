@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import typer
 from loguru import logger
 from watchfiles import watch
 
@@ -72,7 +71,6 @@ def run_watch(watch_dir: Path, cfg: Config) -> None:
                         _save_state(watch_dir, processed)
     except KeyboardInterrupt:
         logger.info("Watch stopped.")
-        raise typer.Exit(0)
 
 
 def _change_filter(change, path: str) -> bool:

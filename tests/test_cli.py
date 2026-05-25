@@ -1,5 +1,5 @@
-from unittest.mock import patch
 from pathlib import Path
+from unittest.mock import patch
 
 from typer.testing import CliRunner
 
@@ -39,7 +39,7 @@ def test_rich_help_contains_key_sections(capsys):
     assert "config init" in out
     assert "config open" in out
     assert "COMMANDS" in out
-    assert "SOURCE FLAGS" in out
+    assert "FLAGS" in out
     assert "CONFIG FILE" in out
 
 
@@ -159,6 +159,14 @@ def test_doctor_fails_api_error(tmp_path, monkeypatch):
     with patch("notes_gen.cli.litellm.completion", side_effect=Exception("401 Unauthorized")):
         result = runner.invoke(app, ["doctor"])
     assert result.exit_code == 1
+
+
+def test_cache_clear_command(tmp_path):
+    with patch("notes_gen.cache.clear_cache", return_value=3) as mock_clear:
+        result = runner.invoke(app, ["cache", "clear"])
+    assert result.exit_code == 0
+    assert "3" in result.output
+    mock_clear.assert_called_once()
 
 
 def test_dry_run_text_no_llm_call(tmp_path):

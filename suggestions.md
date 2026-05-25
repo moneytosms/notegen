@@ -20,7 +20,7 @@ This document tracks potential features and architectural improvements for `note
 ## 3. Output & Formatting
 
 - [ ] **Callout Theme Customization**: Map content types to specific Obsidian callout tags (e.g., `[!abstract]`).
-- [ ] **Auto-Generated TOC**: Clickable Table of Contents for long notes.
+- [x] **Auto-Generated TOC**: Clickable Table of Contents for long notes (`--toc` flag).
 - [x] **Export Formats**: Support PDF/HTML export via `pypandoc`.
 - [x] **Better Image Handling**: Detect and embed/download images from web sources.
 

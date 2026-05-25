@@ -3,6 +3,7 @@ from __future__ import annotations
 from rich.console import Console
 from rich.table import Table
 
+from notes_gen.config import provider_of
 from notes_gen.processing.chunker import count_tokens
 
 _COST_PER_1M: dict[str, float] = {
@@ -24,16 +25,12 @@ _COST_PER_1M: dict[str, float] = {
 _TOKENS_PER_SECOND = 60
 
 
-def _provider(model: str) -> str:
-    return model.split("/")[0] if "/" in model else model
-
-
 def _cost(tokens: int, model: str) -> float:
-    return tokens / 1_000_000 * _COST_PER_1M.get(_provider(model), 1.00)
+    return tokens / 1_000_000 * _COST_PER_1M.get(provider_of(model), 1.00)
 
 
 def _cost_str(tokens: int, model: str) -> str:
-    rate = _COST_PER_1M.get(_provider(model), 1.00)
+    rate = _COST_PER_1M.get(provider_of(model), 1.00)
     if rate == 0.0:
         return "free"
     return f"~${_cost(tokens, model):.4f}"

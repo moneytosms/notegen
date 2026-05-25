@@ -3,13 +3,16 @@ from __future__ import annotations
 import os
 import random
 from pathlib import Path
-from typing import Optional, Dict, List
 
 import yaml
-from pydantic import BaseModel, Field, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 DEFAULT_CONFIG_PATH = Path.home() / ".config" / "notes-gen" / "config.yaml"
 DEFAULT_MODEL = "anthropic/claude-sonnet-4-6"
+
+
+def provider_of(model: str) -> str:
+    return model.split("/")[0] if "/" in model else model
 
 
 class Config(BaseModel):
@@ -17,12 +20,12 @@ class Config(BaseModel):
 
     output_dir: Path = Field(default_factory=lambda: Path.home() / "notes")
     model: str = DEFAULT_MODEL
-    api_base: Optional[str] = None
+    api_base: str | None = None
     mermaid: bool = True
     max_concurrent: int = 5
     web_max_pages: int = 50
     web_max_depth: int = 3
-    api_keys: Dict[str, List[str]] = Field(default_factory=dict)
+    api_keys: dict[str, list[str]] = Field(default_factory=dict)
     max_retries: int = 5
     retry_base_delay: float = 60.0
     verbose: bool = False
@@ -35,7 +38,8 @@ class Config(BaseModel):
     language: str = "en"
     incremental: bool = True
     download_images: bool = True
-    prompt_templates: Dict[str, str] = Field(default_factory=dict)
+    prompt_templates: dict[str, str] = Field(default_factory=dict)
+    toc: bool = False
 
     @field_validator("output_dir", mode="before")
     @classmethod
@@ -45,8 +49,7 @@ class Config(BaseModel):
         return v
 
     def pick_api_key(self) -> str | None:
-        """Return a random key for the active provider, or None if not configured."""
-        provider = self.model.split("/")[0] if "/" in self.model else self.model
+        provider = provider_of(self.model)
         keys = [k for k in self.api_keys.get(provider, []) if k and not k.startswith("#")]
         if keys:
             return random.choice(keys)
@@ -58,7 +61,7 @@ class Config(BaseModel):
 def load_config(path: Path = DEFAULT_CONFIG_PATH) -> Config:
     if not path.exists():
         return Config()
-    
+
     try:
         raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     except Exception:
@@ -81,7 +84,7 @@ def merge_cli_overrides(
 ) -> Config:
     # Filter out None values to avoid overriding with defaults
     overrides = {k: v for k, v in kwargs.items() if v is not None}
-    
+
     # Special handling for prompt templates and extra prompt
     template = overrides.pop("template", None)
     if template and template in cfg.prompt_templates:
@@ -211,8 +214,8 @@ incremental: true
 # Reusable prompt snippets to change note style.
 # Use via: notegen video <url> --template code
 prompt_templates:
-  code: "Focus heavily on implementation details, code blocks, and syntax. Minimize theoretical fluff."
-  theory: "Focus on high-level architecture, design patterns, and first principles. Keep code samples brief."
+  code: "Focus on implementation details, code blocks, and syntax. Minimize theoretical fluff."
+  theory: "Focus on high-level architecture and design patterns. Keep code samples brief."
 #   With 5 retries and base 60s: waits 60 → 120 → 240 → 480 → 960 seconds.
 #   Generous defaults intentionally — free tiers often have 1 req/min limits.
 max_retries: 5

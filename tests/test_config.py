@@ -2,7 +2,7 @@ from pathlib import Path
 
 import yaml
 
-from notes_gen.config import Config, load_config, merge_cli_overrides
+from notes_gen.config import Config, load_config, merge_cli_overrides, provider_of
 
 
 def test_config_defaults():
@@ -164,3 +164,39 @@ def test_merge_cli_overrides_verbose():
     cfg = Config()
     result = merge_cli_overrides(cfg, verbose=True)
     assert result.verbose is True
+
+
+def test_provider_of_with_slash():
+    assert provider_of("anthropic/claude-sonnet-4-6") == "anthropic"
+    assert provider_of("groq/llama-3.3-70b-versatile") == "groq"
+    assert provider_of("nvidia_nim/meta/llama-3.3-70b-instruct") == "nvidia_nim"
+
+
+def test_provider_of_without_slash():
+    assert provider_of("ollama") == "ollama"
+
+
+def test_merge_cli_overrides_template_applies_prompt():
+    cfg = Config(prompt_templates={"code": "Focus on code."})
+    result = merge_cli_overrides(cfg, template="code")
+    assert "Focus on code." in result.extra_prompt
+
+
+def test_merge_cli_overrides_template_appends_to_existing_prompt():
+    cfg = Config(prompt_templates={"code": "Focus on code."}, extra_prompt="Be concise.")
+    result = merge_cli_overrides(cfg, template="code")
+    assert "Be concise." in result.extra_prompt
+    assert "Focus on code." in result.extra_prompt
+
+
+def test_merge_cli_overrides_unknown_template_ignored():
+    cfg = Config(prompt_templates={"code": "Focus on code."})
+    result = merge_cli_overrides(cfg, template="nonexistent")
+    assert result.extra_prompt == ""
+
+
+def test_merge_cli_overrides_toc_flag():
+    cfg = Config()
+    assert cfg.toc is False
+    result = merge_cli_overrides(cfg, toc=True)
+    assert result.toc is True

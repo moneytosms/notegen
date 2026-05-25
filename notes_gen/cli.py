@@ -4,7 +4,7 @@ import platform
 import subprocess
 import time
 from pathlib import Path
-from typing import Any, Optional, cast
+from typing import Any, cast
 
 import litellm
 import typer
@@ -27,6 +27,16 @@ config_app = typer.Typer(help="Manage configuration.")
 cache_app = typer.Typer(help="Manage local cache.")
 app.add_typer(config_app, name="config")
 app.add_typer(cache_app, name="cache")
+
+
+@cache_app.command("clear")
+def cache_clear() -> None:
+    """Delete all cached notes and transcripts."""
+    from notes_gen.cache import clear_cache
+
+    count = clear_cache()
+    typer.echo(f"Cleared {count} cache file(s).")
+
 
 _KNOWN_SUBCOMMANDS = {
     "video",
@@ -85,9 +95,9 @@ def _run_auto(
     cfg: Config,
     force: bool = False,
     force_restart: bool = False,
-    export: Optional[str] = None,
+    export: str | None = None,
 ) -> None:
-    path: Optional[Path] = None
+    path: Path | None = None
     if "youtube.com/playlist" in source or ("list=" in source and "youtube.com" in source):
         from notes_gen.sources.youtube import run_playlist_pipeline
 
@@ -117,7 +127,7 @@ def version_callback(value: bool):
 
 @app.callback()
 def main_callback(
-    version: Optional[bool] = typer.Option(
+    version: bool | None = typer.Option(
         None, "--version", callback=version_callback, is_eager=True, help="Show version and exit"
     ),
 ):
@@ -127,18 +137,19 @@ def main_callback(
 @app.command()
 def video(
     url: str = typer.Argument(..., help="YouTube video URL"),
-    output_dir: Optional[Path] = typer.Option(None, "--output-dir", "-o"),
-    model: Optional[str] = typer.Option(None, "--model", "-m"),
+    output_dir: Path | None = typer.Option(None, "--output-dir", "-o"),
+    model: str | None = typer.Option(None, "--model", "-m"),
     no_mermaid: bool = typer.Option(False, "--no-mermaid"),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
     force: bool = typer.Option(False, "--force"),
     no_cache: bool = typer.Option(False, "--no-cache"),
     dry_run: bool = typer.Option(False, "--dry-run", "-n", help="Print estimate; skip LLM"),
-    fmt: Optional[str] = typer.Option(None, "--format", help="obsidian|logseq|plain|roam"),
-    lang: Optional[str] = typer.Option(None, "--lang", help="Target language code (e.g. en, es)"),
-    template: Optional[str] = typer.Option(None, "--template", "-t", help="Named prompt template"),
-    export: Optional[str] = typer.Option(None, "--export", help="pdf|html|docx"),
-    prompt: Optional[str] = typer.Option(
+    fmt: str | None = typer.Option(None, "--format", help="obsidian|logseq|plain|roam"),
+    lang: str | None = typer.Option(None, "--lang", help="Target language code (e.g. en, es)"),
+    template: str | None = typer.Option(None, "--template", "-t", help="Named prompt template"),
+    export: str | None = typer.Option(None, "--export", help="pdf|html|docx"),
+    toc: bool = typer.Option(False, "--toc", help="Insert table of contents"),
+    prompt: str | None = typer.Option(
         None, "--prompt", "-p", help="Extra instructions for LLM prompt"
     ),
 ) -> None:
@@ -158,6 +169,7 @@ def video(
         extra_prompt=prompt,
         language=lang,
         template=template,
+        toc=toc or None,
     )
     setup_logger(cfg.verbose)
     logger.info(f"Generating notes for video: {url}")
@@ -169,22 +181,23 @@ def video(
 @app.command()
 def playlist(
     url: str = typer.Argument(..., help="YouTube playlist URL"),
-    output_dir: Optional[Path] = typer.Option(None, "--output-dir", "-o"),
-    model: Optional[str] = typer.Option(None, "--model", "-m"),
+    output_dir: Path | None = typer.Option(None, "--output-dir", "-o"),
+    model: str | None = typer.Option(None, "--model", "-m"),
     no_mermaid: bool = typer.Option(False, "--no-mermaid"),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
     force: bool = typer.Option(False, "--force"),
     force_restart: bool = typer.Option(False, "--force-restart", help="Ignore progress file"),
     no_cache: bool = typer.Option(False, "--no-cache"),
     dry_run: bool = typer.Option(False, "--dry-run", "-n", help="Print estimate; skip LLM"),
-    fmt: Optional[str] = typer.Option(None, "--format", help="obsidian|logseq|plain|roam"),
-    lang: Optional[str] = typer.Option(None, "--lang", help="Target language code (e.g. en, es)"),
-    incremental: Optional[bool] = typer.Option(
+    fmt: str | None = typer.Option(None, "--format", help="obsidian|logseq|plain|roam"),
+    lang: str | None = typer.Option(None, "--lang", help="Target language code (e.g. en, es)"),
+    incremental: bool | None = typer.Option(
         None, "--incremental/--no-incremental", help="Skip existing files"
     ),
-    template: Optional[str] = typer.Option(None, "--template", "-t", help="Named prompt template"),
-    export: Optional[str] = typer.Option(None, "--export", help="pdf|html|docx"),
-    prompt: Optional[str] = typer.Option(
+    template: str | None = typer.Option(None, "--template", "-t", help="Named prompt template"),
+    export: str | None = typer.Option(None, "--export", help="pdf|html|docx"),
+    toc: bool = typer.Option(False, "--toc", help="Insert table of contents"),
+    prompt: str | None = typer.Option(
         None, "--prompt", "-p", help="Extra instructions for LLM prompt"
     ),
 ) -> None:
@@ -205,6 +218,7 @@ def playlist(
         language=lang,
         incremental=incremental,
         template=template,
+        toc=toc or None,
     )
     setup_logger(cfg.verbose)
     logger.info(f"Generating notes for playlist: {url}")
@@ -216,17 +230,18 @@ def playlist(
 @app.command()
 def web(
     url: str = typer.Argument(..., help="Web URL to fetch"),
-    output_dir: Optional[Path] = typer.Option(None, "--output-dir", "-o"),
-    model: Optional[str] = typer.Option(None, "--model", "-m"),
+    output_dir: Path | None = typer.Option(None, "--output-dir", "-o"),
+    model: str | None = typer.Option(None, "--model", "-m"),
     no_mermaid: bool = typer.Option(False, "--no-mermaid"),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
     no_cache: bool = typer.Option(False, "--no-cache"),
     dry_run: bool = typer.Option(False, "--dry-run", "-n", help="Print estimate; skip LLM"),
-    fmt: Optional[str] = typer.Option(None, "--format", help="obsidian|logseq|plain|roam"),
-    lang: Optional[str] = typer.Option(None, "--lang", help="Target language code (e.g. en, es)"),
-    template: Optional[str] = typer.Option(None, "--template", "-t", help="Named prompt template"),
-    export: Optional[str] = typer.Option(None, "--export", help="pdf|html|docx"),
-    prompt: Optional[str] = typer.Option(
+    fmt: str | None = typer.Option(None, "--format", help="obsidian|logseq|plain|roam"),
+    lang: str | None = typer.Option(None, "--lang", help="Target language code (e.g. en, es)"),
+    template: str | None = typer.Option(None, "--template", "-t", help="Named prompt template"),
+    export: str | None = typer.Option(None, "--export", help="pdf|html|docx"),
+    toc: bool = typer.Option(False, "--toc", help="Insert table of contents"),
+    prompt: str | None = typer.Option(
         None, "--prompt", "-p", help="Extra instructions for LLM prompt"
     ),
 ) -> None:
@@ -246,6 +261,7 @@ def web(
         extra_prompt=prompt,
         language=lang,
         template=template,
+        toc=toc or None,
     )
     setup_logger(cfg.verbose)
     logger.info(f"Generating notes for web URL: {url}")
@@ -257,17 +273,18 @@ def web(
 @app.command()
 def text(
     source: str = typer.Argument(..., help="File path or '-' for stdin"),
-    output_dir: Optional[Path] = typer.Option(None, "--output-dir", "-o"),
-    model: Optional[str] = typer.Option(None, "--model", "-m"),
+    output_dir: Path | None = typer.Option(None, "--output-dir", "-o"),
+    model: str | None = typer.Option(None, "--model", "-m"),
     no_mermaid: bool = typer.Option(False, "--no-mermaid"),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
     no_cache: bool = typer.Option(False, "--no-cache"),
     dry_run: bool = typer.Option(False, "--dry-run", "-n", help="Print estimate; skip LLM"),
-    fmt: Optional[str] = typer.Option(None, "--format", help="obsidian|logseq|plain|roam"),
-    lang: Optional[str] = typer.Option(None, "--lang", help="Target language code (e.g. en, es)"),
-    template: Optional[str] = typer.Option(None, "--template", "-t", help="Named prompt template"),
-    export: Optional[str] = typer.Option(None, "--export", help="pdf|html|docx"),
-    prompt: Optional[str] = typer.Option(
+    fmt: str | None = typer.Option(None, "--format", help="obsidian|logseq|plain|roam"),
+    lang: str | None = typer.Option(None, "--lang", help="Target language code (e.g. en, es)"),
+    template: str | None = typer.Option(None, "--template", "-t", help="Named prompt template"),
+    export: str | None = typer.Option(None, "--export", help="pdf|html|docx"),
+    toc: bool = typer.Option(False, "--toc", help="Insert table of contents"),
+    prompt: str | None = typer.Option(
         None, "--prompt", "-p", help="Extra instructions for LLM prompt"
     ),
 ) -> None:
@@ -287,6 +304,7 @@ def text(
         extra_prompt=prompt,
         language=lang,
         template=template,
+        toc=toc or None,
     )
     setup_logger(cfg.verbose)
     logger.info(f"Generating notes from text: {source}")
@@ -298,22 +316,23 @@ def text(
 @app.command()
 def auto(
     source: str = typer.Argument(..., help="YouTube URL, web URL, or file path"),
-    output_dir: Optional[Path] = typer.Option(None, "--output-dir", "-o"),
-    model: Optional[str] = typer.Option(None, "--model", "-m"),
+    output_dir: Path | None = typer.Option(None, "--output-dir", "-o"),
+    model: str | None = typer.Option(None, "--model", "-m"),
     no_mermaid: bool = typer.Option(False, "--no-mermaid"),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
     force: bool = typer.Option(False, "--force"),
     force_restart: bool = typer.Option(False, "--force-restart", help="Ignore progress file"),
     no_cache: bool = typer.Option(False, "--no-cache"),
     dry_run: bool = typer.Option(False, "--dry-run", "-n", help="Print estimate; skip LLM"),
-    fmt: Optional[str] = typer.Option(None, "--format", help="obsidian|logseq|plain|roam"),
-    lang: Optional[str] = typer.Option(None, "--lang", help="Target language code (e.g. en, es)"),
-    incremental: Optional[bool] = typer.Option(
+    fmt: str | None = typer.Option(None, "--format", help="obsidian|logseq|plain|roam"),
+    lang: str | None = typer.Option(None, "--lang", help="Target language code (e.g. en, es)"),
+    incremental: bool | None = typer.Option(
         None, "--incremental/--no-incremental", help="Skip existing files"
     ),
-    template: Optional[str] = typer.Option(None, "--template", "-t", help="Named prompt template"),
-    export: Optional[str] = typer.Option(None, "--export", help="pdf|html|docx"),
-    prompt: Optional[str] = typer.Option(
+    template: str | None = typer.Option(None, "--template", "-t", help="Named prompt template"),
+    export: str | None = typer.Option(None, "--export", help="pdf|html|docx"),
+    toc: bool = typer.Option(False, "--toc", help="Insert table of contents"),
+    prompt: str | None = typer.Option(
         None, "--prompt", "-p", help="Extra instructions for LLM prompt"
     ),
 ) -> None:
@@ -332,6 +351,7 @@ def auto(
         language=lang,
         incremental=incremental,
         template=template,
+        toc=toc or None,
     )
     setup_logger(cfg.verbose)
     logger.info(f"Auto-detecting source and generating notes: {source}")
@@ -341,15 +361,15 @@ def auto(
 @app.command()
 def watch(
     directory: Path = typer.Argument(..., help="Directory to watch for new .txt/.md files"),
-    output_dir: Optional[Path] = typer.Option(None, "--output-dir", "-o"),
-    model: Optional[str] = typer.Option(None, "--model", "-m"),
+    output_dir: Path | None = typer.Option(None, "--output-dir", "-o"),
+    model: str | None = typer.Option(None, "--model", "-m"),
     no_mermaid: bool = typer.Option(False, "--no-mermaid"),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
     no_cache: bool = typer.Option(False, "--no-cache"),
-    fmt: Optional[str] = typer.Option(None, "--format", help="obsidian|logseq|plain|roam"),
-    lang: Optional[str] = typer.Option(None, "--lang", help="Target language code (e.g. en, es)"),
-    template: Optional[str] = typer.Option(None, "--template", "-t", help="Named prompt template"),
-    prompt: Optional[str] = typer.Option(
+    fmt: str | None = typer.Option(None, "--format", help="obsidian|logseq|plain|roam"),
+    lang: str | None = typer.Option(None, "--lang", help="Target language code (e.g. en, es)"),
+    template: str | None = typer.Option(None, "--template", "-t", help="Named prompt template"),
+    prompt: str | None = typer.Option(
         None, "--prompt", "-p", help="Extra instructions for LLM prompt"
     ),
 ) -> None:
@@ -693,10 +713,12 @@ def config_show() -> None:
     # Convert to dict and stringify paths for YAML
     data = cfg.model_dump()
     data["output_dir"] = str(data["output_dir"])
-    
+
     if "api_keys" in data:
         for provider in data["api_keys"]:
-            data["api_keys"][provider] = [f"{k[:6]}...{k[-4:]}" for k in data["api_keys"][provider]]
+            data["api_keys"][provider] = [
+                f"{k[:4]}...{k[-4:]}" if len(k) > 8 else "***" for k in data["api_keys"][provider]
+            ]
     typer.echo(yaml.dump(data, default_flow_style=False), nl=False)
 
 
@@ -812,60 +834,52 @@ def _show_custom_help():
     win_path = r"%USERPROFILE%\.config\notes-gen\config.yaml"
 
     console.print(f"\n[#50C878]{_ASCII_ART}[/]")
-    console.print(f"[dim]v{ver}[/]  YouTube · playlists · web pages → rich Obsidian notes\n")
+    console.print(f"  [dim]v{ver}[/]  YouTube · playlists · web pages → Obsidian notes\n")
 
-    # Setup section
-    console.print("[bold]FIRST-TIME SETUP[/]")
+    console.print("[bold]COMMANDS[/]")
     t = Table(show_header=False, box=None, padding=(0, 2))
-    t.add_row("notegen setup", "[dim]Interactive first-run configuration[/]")
-    t.add_row("notegen doctor", "[dim]Check environment and API keys[/]")
+    t.add_row("notegen [cyan]<url>[/]", "[dim]Auto-detect source and generate notes[/]")
+    t.add_row("notegen [cyan]video <url>[/]", "[dim]YouTube video[/]")
+    t.add_row("notegen [cyan]playlist <url>[/]", "[dim]YouTube playlist[/]")
+    t.add_row("notegen [cyan]web <url>[/]", "[dim]Web page or site crawl[/]")
+    t.add_row("notegen [cyan]text <file|->[/]", "[dim]Text file or stdin[/]")
+    t.add_row("notegen [cyan]interactive[/]", "[dim]Guided wizard[/]")
+    t.add_row("notegen [cyan]watch <dir>[/]", "[dim]Monitor folder for new files[/]")
     console.print(t)
 
-    console.print("\n[bold]COMMANDS[/]")
+    console.print("\n[bold]FLAGS[/] [dim](video · playlist · web · text · auto)[/]")
     t = Table(show_header=False, box=None, padding=(0, 2))
-    t.add_row("notegen <url>", "[dim]Generate notes (auto-detects type)[/]")
-    t.add_row("notegen interactive", "[dim]Guided note generation wizard[/]")
-    t.add_row("notegen playlist <url>", "[dim]Convert whole YouTube playlist[/]")
-    t.add_row("notegen web <url>", "[dim]Scrape site and generate notes[/]")
-    t.add_row("notegen watch <dir>", "[dim]Monitor folder for new text files[/]")
-    console.print(t)
-
-    console.print("\n[bold]SOURCE FLAGS[/] [dim](video · playlist · web · text · auto)[/]")
-    t = Table(show_header=False, box=None, padding=(0, 2))
-    t.add_row("-o, --output-dir <path>", "[dim]Override output directory[/]")
-    t.add_row("-m, --model <str>", "[dim]Override LLM model[/]")
-    t.add_row("-n, --dry-run", "[dim]Print estimate, skip API calls[/]")
+    t.add_row("-o, --output-dir [cyan]<path>[/]", "[dim]Override output directory[/]")
+    t.add_row("-m, --model [cyan]<str>[/]", "[dim]LiteLLM model string[/]")
+    t.add_row("-n, --dry-run", "[dim]Estimate cost, skip LLM calls[/]")
     t.add_row("-v, --verbose", "[dim]Show detailed logs[/]")
-    t.add_row("--lang <code>", "[dim]Target language (e.g. en, es, hi)[/]")
-    t.add_row("-t, --template <name>", "[dim]Apply named prompt style[/]")
-    t.add_row("--export <fmt>", "[dim]Export to pdf|html|docx[/]")
+    t.add_row("--lang [cyan]<code>[/]", "[dim]Target language, e.g. en, es, hi[/]")
+    t.add_row("-t, --template [cyan]<name>[/]", "[dim]Apply named prompt style from config[/]")
+    t.add_row("--export [cyan]<fmt>[/]", "[dim]Export to pdf | html | docx[/]")
+    t.add_row("--toc", "[dim]Insert table of contents[/]")
+    t.add_row("--no-cache", "[dim]Skip cache read and write[/]")
     console.print(t)
 
     console.print("\n[bold]SETUP & DIAGNOSTICS[/]")
     t = Table(show_header=False, box=None, padding=(0, 2))
-    t.add_row("notegen setup", "[dim]Configure providers and keys[/]")
-    t.add_row("notegen doctor", "[dim]Verify environment and connectivity[/]")
+    t.add_row("notegen [cyan]setup[/]", "[dim]Interactive first-run configuration[/]")
+    t.add_row("notegen [cyan]doctor[/]", "[dim]Check environment and LLM connectivity[/]")
     console.print(t)
 
     console.print("\n[bold]CONFIG[/]")
     t = Table(show_header=False, box=None, padding=(0, 2))
-    t.add_row("notegen config init", "[dim]Create default config file[/]")
-    t.add_row("notegen config open", "[dim]Open config in editor[/]")
-    t.add_row("notegen config show", "[dim]Print current settings[/]")
-    console.print(t)
-
-    console.print("\n[bold]CACHE[/]")
-    t = Table(show_header=False, box=None, padding=(0, 2))
-    t.add_row("notegen cache clear", "[dim]Delete all local cache files[/]")
+    t.add_row("notegen [cyan]config init[/]", "[dim]Create default config file[/]")
+    t.add_row("notegen [cyan]config open[/]", "[dim]Open config in editor[/]")
+    t.add_row("notegen [cyan]config show[/]", "[dim]Print current settings (keys masked)[/]")
+    t.add_row("notegen [cyan]config validate[/]", "[dim]Validate config and report errors[/]")
+    t.add_row("notegen [cyan]cache clear[/]", "[dim]Delete all local cache entries[/]")
     console.print(t)
 
     console.print("\n[bold]CONFIG FILE[/]")
-    console.print("  [dim]Linux/macOS[/]  [green]~/.config/notes-gen/config.yaml[/]")
-    console.print(f"  [dim]Windows[/]     [green]{win_path}[/]")
+    console.print("  [dim]Linux / macOS[/]  [green]~/.config/notes-gen/config.yaml[/]")
+    console.print(f"  [dim]Windows[/]       [green]{win_path}[/]")
     console.print("\n  [dim]Free providers: groq · nvidia_nim · gemini[/]")
-    console.print(
-        "\n  [italic dim]Full docs & examples: https://github.com/moneytosms/notegen[/]\n"
-    )
+    console.print("\n  [italic dim]Docs: https://github.com/moneytosms/notegen[/]\n")
 
 
 if __name__ == "__main__":

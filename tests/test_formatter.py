@@ -1,6 +1,6 @@
 from datetime import date
 
-from notes_gen.output.formatter import build_frontmatter, slugify
+from notes_gen.output.formatter import build_frontmatter, generate_toc, slugify
 
 
 def test_slugify_basic():
@@ -83,3 +83,59 @@ def test_build_frontmatter_is_valid_yaml():
     parsed = yaml.safe_load(inner)
     assert parsed["title"] == "Valid YAML"
     assert parsed["type"] == "article"
+
+
+_NOTES_WITH_MANY_HEADERS = """\
+# The Title
+
+## Introduction
+
+Some text.
+
+## Core Concepts
+
+More text.
+
+### Sub-concept A
+
+Detail.
+
+### Sub-concept B
+
+Detail.
+
+## Conclusion
+
+Final thoughts.
+"""
+
+
+def test_generate_toc_inserts_contents_block():
+    result = generate_toc(_NOTES_WITH_MANY_HEADERS)
+    assert "## Contents" in result
+    assert "[[#Introduction|Introduction]]" in result
+    assert "[[#Core Concepts|Core Concepts]]" in result
+    assert "  - [[#Sub-concept A|Sub-concept A]]" in result
+
+
+def test_generate_toc_inserted_after_title():
+    result = generate_toc(_NOTES_WITH_MANY_HEADERS)
+    title_pos = result.index("# The Title")
+    toc_pos = result.index("## Contents")
+    intro_pos = result.index("## Introduction")
+    assert title_pos < toc_pos < intro_pos
+
+
+def test_generate_toc_skips_when_few_headers():
+    notes = "# Title\n\n## Only\n\nOne section.\n"
+    result = generate_toc(notes)
+    assert result == notes
+    assert "## Contents" not in result
+
+
+def test_generate_toc_passthrough_when_no_title():
+    notes = "## Section A\n\n## Section B\n\n## Section C\n\n## Section D\n"
+    result = generate_toc(notes)
+    assert "## Contents" in result
+    # TOC at top since no # heading
+    assert result.startswith("## Contents")

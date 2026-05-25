@@ -1,10 +1,11 @@
-from typing import Any
-
 import re
 import unicodedata
 from datetime import date
+from typing import Any
 
 import yaml
+
+_MIN_HEADERS_FOR_TOC = 4
 
 
 def slugify(text: str) -> str:
@@ -17,6 +18,29 @@ def slugify(text: str) -> str:
     text = re.sub(r"[\s_]+", "-", text)
     text = text.strip("-")
     return text
+
+
+def generate_toc(notes: str) -> str:
+    """Insert an Obsidian-compatible TOC after the title heading if >= 4 sections exist."""
+    headers = []
+    for line in notes.splitlines():
+        m = re.match(r"^(#{2,3})\s+(.+)$", line)
+        if m:
+            indent = "  " * (len(m.group(1)) - 2)
+            text = m.group(2).strip()
+            headers.append(f"{indent}- [[#{text}|{text}]]")
+
+    if len(headers) < _MIN_HEADERS_FOR_TOC:
+        return notes
+
+    toc_block = "## Contents\n\n" + "\n".join(headers)
+
+    title_match = re.search(r"^# .+$", notes, re.MULTILINE)
+    if title_match:
+        pos = title_match.end()
+        return notes[:pos] + "\n\n" + toc_block + "\n" + notes[pos:]
+
+    return toc_block + "\n\n" + notes
 
 
 def build_frontmatter(

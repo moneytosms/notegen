@@ -1,11 +1,7 @@
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from notes_gen.config import Config
 from notes_gen.processing.llm import (
-    _available_keys,
-    _is_network_error,
     _is_rate_limit_error,
     _parse_retry_after,
     compress_notes,
@@ -100,7 +96,12 @@ def test_parse_retry_after_extracts_seconds():
 
 
 def test_retries_on_rate_limit_then_succeeds():
-    cfg = Config(model="groq/llama-3.3-70b-versatile", api_keys={"groq": ["k1"]}, max_retries=3, retry_base_delay=0.1)
+    cfg = Config(
+        model="groq/llama-3.3-70b-versatile",
+        api_keys={"groq": ["k1"]},
+        max_retries=3,
+        retry_base_delay=0.1,
+    )
     chunks = ["content"]
 
     with (
@@ -119,7 +120,9 @@ def test_retries_on_rate_limit_then_succeeds():
 
 
 def test_network_error_retries_without_cooldown():
-    cfg = Config(model="anthropic/claude-sonnet-4-6", api_keys={}, max_retries=2, retry_base_delay=0.1)
+    cfg = Config(
+        model="anthropic/claude-sonnet-4-6", api_keys={}, max_retries=2, retry_base_delay=0.1
+    )
     chunks = ["content"]
 
     with (

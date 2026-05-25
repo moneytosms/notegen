@@ -89,3 +89,53 @@ def test_watch_command_exists():
     result = runner.invoke(app, ["watch", "--help"])
     assert result.exit_code == 0
     assert "directory" in result.output.lower() or "watch" in result.output.lower()
+
+
+def test_process_file_returns_true_on_success(tmp_path):
+    from unittest.mock import patch
+
+    from notes_gen.config import Config
+    from notes_gen.sources.watch import _process_file
+
+    f = tmp_path / "note.txt"
+    f.write_text("content", encoding="utf-8")
+
+    with patch("notes_gen.sources.text.run_text_pipeline", return_value=tmp_path / "note.md"):
+        result = _process_file(f, Config(output_dir=tmp_path, cache=False))
+
+    assert result is True
+
+
+def test_process_file_returns_false_on_error(tmp_path):
+    from unittest.mock import patch
+
+    from notes_gen.config import Config
+    from notes_gen.sources.watch import _process_file
+
+    f = tmp_path / "note.txt"
+    f.write_text("content", encoding="utf-8")
+
+    with patch("notes_gen.sources.text.run_text_pipeline", side_effect=RuntimeError("boom")):
+        result = _process_file(f, Config(output_dir=tmp_path, cache=False))
+
+    assert result is False
+
+
+def test_watch_processes_new_file_events(tmp_path):
+    from unittest.mock import patch
+
+    from notes_gen.config import Config
+    from notes_gen.sources.watch import run_watch
+
+    txt_file = tmp_path / "new.txt"
+    txt_file.write_text("content", encoding="utf-8")
+
+    fake_changes = [[(None, str(txt_file))]]
+
+    with (
+        patch("notes_gen.sources.watch.watch", return_value=iter(fake_changes)),
+        patch("notes_gen.sources.watch._process_file", return_value=True) as mock_proc,
+    ):
+        run_watch(tmp_path, Config(output_dir=tmp_path, cache=False))
+
+    assert mock_proc.call_count >= 1

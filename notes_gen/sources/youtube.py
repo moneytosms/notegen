@@ -4,9 +4,8 @@ import json
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
-from typing import Any, Optional, cast
+from typing import Any, cast
 
-import typer
 from loguru import logger
 from youtube_transcript_api import YouTubeTranscriptApi
 from youtube_transcript_api._errors import NoTranscriptFound, TranscriptsDisabled
@@ -14,7 +13,7 @@ from yt_dlp import YoutubeDL
 
 from notes_gen.config import Config
 from notes_gen.output.formats import format_notes
-from notes_gen.output.formatter import build_frontmatter, slugify
+from notes_gen.output.formatter import build_frontmatter, generate_toc, slugify
 from notes_gen.output.writer import write_index, write_note
 from notes_gen.processing.chunker import chunk_text
 from notes_gen.processing.filter import remove_meta
@@ -54,9 +53,6 @@ def _transcript_to_text(transcript_list) -> str:
         return item.text
 
     return " ".join(text_of(item) for item in transcript_list)
-
-
-_TRANSLATABLE_LANGS = ["hi", "ml"]
 
 
 def _fetch_transcript(video_id: str, lang: str = "en") -> str:
@@ -137,7 +133,7 @@ def run_video_pipeline(url: str, cfg: Config) -> Path:
         set_notes_cache,
         set_transcript_cache,
     )
-    from notes_gen.output.runner import use_dashboard, log_to_dashboard, update_dashboard_stats
+    from notes_gen.output.runner import log_to_dashboard, update_dashboard_stats, use_dashboard
     from notes_gen.processing.chunker import count_tokens
     from notes_gen.processing.dry_run import _cost_str
     from notes_gen.processing.filter import remove_meta
@@ -146,8 +142,7 @@ def run_video_pipeline(url: str, cfg: Config) -> Path:
         log_to_dashboard(f"Fetching metadata for {url}...")
         meta, transcript = fetch_video(url, lang=cfg.language)
         if db:
-            db.title = f"Video: {meta.title[:50]}"
-            db._init_layout()
+            db.update_title(f"Video: {meta.title[:50]}")
 
         canonical = _video_url(meta.video_id)
 
@@ -161,20 +156,21 @@ def run_video_pipeline(url: str, cfg: Config) -> Path:
 
         log_to_dashboard("Filtering transcript...")
         filtered = remove_meta(transcript)
-        
+
         tokens = count_tokens(filtered)
         update_dashboard_stats(tokens, _cost_str(tokens, cfg.model))
-        
-        # Inject chapters into extra prompt for better context
-        original_extra = cfg.extra_prompt
+
         chapter_context = _format_chapters(meta.chapters)
         if chapter_context:
-            cfg.extra_prompt = f"{chapter_context}\n\n{original_extra}".strip()
+            cfg = cfg.model_copy(
+                update={"extra_prompt": f"{chapter_context}\n\n{cfg.extra_prompt}".strip()}
+            )
 
         chunks = chunk_text(filtered, max_tokens=12000, overlap=200)
 
         if cfg.dry_run:
             from notes_gen.processing.dry_run import print_dry_run_summary
+
             print_dry_run_summary(meta.title, canonical, chunks, cfg.model)
             raise SystemExit(0)
 
@@ -197,6 +193,8 @@ def run_video_pipeline(url: str, cfg: Config) -> Path:
         if cfg.max_output_tokens > 0:
             notes = compress_notes(notes, cfg.max_output_tokens, cfg)
         notes = format_notes(notes, cfg.output_format)
+        if cfg.toc:
+            notes = generate_toc(notes)
         frontmatter = build_frontmatter(
             title=meta.title,
             source=meta.url,
@@ -232,7 +230,11 @@ def fetch_playlist(url: str) -> tuple[str, list[VideoMetadata]]:
         if not entry:
             continue
         video_id = cast(str, entry.get("id", ""))
-        v_url = f"https://www.youtube.com/watch?v={video_id}" if video_id else cast(str, entry.get("url", ""))
+        v_url = (
+            f"https://www.youtube.com/watch?v={video_id}"
+            if video_id
+            else cast(str, entry.get("url", ""))
+        )
         videos.append(
             VideoMetadata(
                 title=cast(str, entry.get("title", "Unknown")),
@@ -267,16 +269,16 @@ def _load_progress(progress_file: Path) -> dict:
 
 
 def _save_progress(progress_file: Path, state: dict) -> None:
-    import json
 
     progress_file.write_text(json.dumps(state), encoding="utf-8")
 
 
 async def _run_playlist_async(url: str, cfg: Config, force: bool, force_restart: bool) -> Path:
     import anyio
+
     from notes_gen.output.dashboard import Dashboard
-    from notes_gen.processing.dry_run import _cost_str
     from notes_gen.processing.chunker import count_tokens
+    from notes_gen.processing.dry_run import _cost_str
 
     playlist_title, videos = fetch_playlist(url)
     playlist_slug = slugify(playlist_title) or "playlist"
@@ -294,7 +296,7 @@ async def _run_playlist_async(url: str, cfg: Config, force: bool, force_restart:
     done_count = [0]
     total_tokens = [0]
     total_videos = len(videos)
-    
+
     with Dashboard(f"Playlist: {playlist_title}", cfg.model) as db:
         db.update_progress(0, total_videos, f"[0/{total_videos}] Initializing...")
         results: list[tuple[int, str | None]] = []
@@ -308,14 +310,22 @@ async def _run_playlist_async(url: str, cfg: Config, force: bool, force_restart:
                     db.log(f"Skipping {meta.title[:30]} (file exists)")
                     results.append((idx, slug_candidate))
                     done_count[0] += 1
-                    db.update_progress(done_count[0], total_videos, f"[{done_count[0]}/{total_videos}] {meta.title[:40]}")
+                    db.update_progress(
+                        done_count[0],
+                        total_videos,
+                        f"[{done_count[0]}/{total_videos}] {meta.title[:40]}",
+                    )
                     return
 
                 if slug_candidate in progress_state["completed"]:
                     db.log(f"Skipping {meta.title[:30]} (already done)")
                     results.append((idx, slug_candidate))
                     done_count[0] += 1
-                    db.update_progress(done_count[0], total_videos, f"[{done_count[0]}/{total_videos}] {meta.title[:40]}")
+                    db.update_progress(
+                        done_count[0],
+                        total_videos,
+                        f"[{done_count[0]}/{total_videos}] {meta.title[:40]}",
+                    )
                     return
 
                 try:
@@ -331,7 +341,11 @@ async def _run_playlist_async(url: str, cfg: Config, force: bool, force_restart:
                     if not force:
                         raise SystemExit(1)
                     done_count[0] += 1
-                    db.update_progress(done_count[0], total_videos, f"[{done_count[0]}/{total_videos}] {meta.title[:40]} (skipped)")
+                    db.update_progress(
+                        done_count[0],
+                        total_videos,
+                        f"[{done_count[0]}/{total_videos}] {meta.title[:40]} (skipped)",
+                    )
                     return
 
                 db.log(f"Generating notes for {meta.title[:30]}...")
@@ -339,14 +353,15 @@ async def _run_playlist_async(url: str, cfg: Config, force: bool, force_restart:
                 chunk_tokens = count_tokens(filtered)
                 total_tokens[0] += chunk_tokens
                 db.update_stats(total_tokens[0], _cost_str(total_tokens[0], cfg.model))
-                
-                # Inject chapters for this video
-                video_extra = cfg.extra_prompt
+
                 chapter_context = _format_chapters(meta.chapters)
-                video_cfg = cfg
-                if chapter_context:
-                    from dataclasses import replace
-                    video_cfg = replace(cfg, extra_prompt=f"{chapter_context}\n\n{video_extra}".strip())
+                video_cfg = (
+                    cfg.model_copy(
+                        update={"extra_prompt": f"{chapter_context}\n\n{cfg.extra_prompt}".strip()}
+                    )
+                    if chapter_context
+                    else cfg
+                )
 
                 chunks = chunk_text(filtered, max_tokens=12000, overlap=200)
                 notes_raw, tags = await cast(Any, anyio.to_thread).run_sync(
@@ -354,6 +369,8 @@ async def _run_playlist_async(url: str, cfg: Config, force: bool, force_restart:
                 )
                 notes = merge([notes_raw], similarity_threshold=cfg.merger_similarity_threshold)
                 notes = format_notes(notes, cfg.output_format)
+                if cfg.toc:
+                    notes = generate_toc(notes)
                 frontmatter = build_frontmatter(
                     title=meta.title,
                     source=meta.url,
@@ -371,7 +388,11 @@ async def _run_playlist_async(url: str, cfg: Config, force: bool, force_restart:
                 _save_progress(progress_file, progress_state)
                 done_count[0] += 1
                 db.log(f"[green]Completed {meta.title[:30]}[/]")
-                db.update_progress(done_count[0], total_videos, f"[{done_count[0]}/{total_videos}] {meta.title[:40]}")
+                db.update_progress(
+                    done_count[0],
+                    total_videos,
+                    f"[{done_count[0]}/{total_videos}] {meta.title[:40]}",
+                )
 
         async with anyio.create_task_group() as tg:
             for i, meta in enumerate(videos):

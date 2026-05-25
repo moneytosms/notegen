@@ -8,11 +8,17 @@ from typing import Any, cast
 
 import httpx
 import litellm
+from loguru import logger
 from rich.console import Console
 from rich.progress import BarColumn, Progress, SpinnerColumn, TaskProgressColumn, TextColumn
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception, stop_after_delay
+from tenacity import (
+    retry,
+    retry_if_exception,
+    stop_after_attempt,
+    wait_exponential,
+)
 
-from notes_gen.config import Config
+from notes_gen.config import Config, provider_of
 from notes_gen.output.runner import log_to_dashboard
 
 _console = Console(stderr=True)
@@ -136,10 +142,6 @@ These are the notes a student uses to truly learn the subject.
 """
 
 
-def _provider(model: str) -> str:
-    return model.split("/")[0] if "/" in model else model
-
-
 def _is_rate_limit_error(exc: BaseException) -> bool:
     name = type(exc).__name__.lower()
     msg = str(exc).lower()
@@ -161,7 +163,7 @@ def _is_network_error(exc: BaseException) -> bool:
 
 def _available_keys(cfg: Config) -> list[str]:
     now = time.monotonic()
-    provider = _provider(cfg.model)
+    provider = provider_of(cfg.model)
     return [
         k
         for k in cfg.api_keys.get(provider, [])
@@ -182,35 +184,39 @@ def _parse_retry_after(exc: Exception) -> float | None:
     )
     return float(m.group(1)) if m else None
 
-from loguru import logger
 
 def _call_with_retry(cfg: Config, messages: list[dict]) -> str:
-    @retry(
-        stop=(stop_after_attempt(cfg.max_retries + 1) | stop_after_delay(300)),
-        wait=wait_exponential(multiplier=cfg.retry_base_delay, min=1, max=60),
-        retry=(retry_if_exception(_is_rate_limit_error) | retry_if_exception(_is_network_error)),
-        before_sleep=lambda retry_state: logger.warning(
-            f"Retrying LLM call ({retry_state.attempt_number}/{cfg.max_retries})... "
-            f"Error: {retry_state.outcome.exception()}"
-        ) if retry_state.outcome and retry_state.outcome.failed else None
-    )
+    max_delay = cfg.retry_base_delay * (2**cfg.max_retries)
 
+    @retry(
+        stop=stop_after_attempt(cfg.max_retries + 1),
+        wait=wait_exponential(multiplier=cfg.retry_base_delay, min=1, max=max_delay),
+        retry=(retry_if_exception(_is_rate_limit_error) | retry_if_exception(_is_network_error)),
+        before_sleep=lambda retry_state: (
+            logger.warning(
+                f"Retrying LLM call ({retry_state.attempt_number}/{cfg.max_retries})... "
+                f"Error: {retry_state.outcome.exception()}"
+            )
+            if retry_state.outcome and retry_state.outcome.failed
+            else None
+        ),
+    )
     def _do_call() -> str:
         available = _available_keys(cfg)
         api_key = random.choice(available) if available else cfg.pick_api_key()
-        
+
         kwargs: dict = {"model": cfg.model, "messages": messages, "temperature": 0.3}
         if api_key:
             kwargs["api_key"] = api_key
         if cfg.api_base:
             kwargs["api_base"] = cfg.api_base
-            
+
         try:
             response = cast(Any, litellm.completion(**kwargs))
             return cast(str, response.choices[0].message.content)
         except Exception as exc:
             if _is_rate_limit_error(exc):
-                _cooldown_key(api_key, 60) # Cooldown on 429
+                _cooldown_key(api_key, 60)  # Cooldown on 429
             raise
 
     return _do_call()
@@ -228,17 +234,20 @@ def _extract_tags(text: str) -> tuple[str, list[str]]:
     return clean, tags
 
 
-def _make_messages(chunk: str, cfg: Config, format_suffix: str = "", extra_prompt: str = "") -> list[dict]:
+def _make_messages(
+    chunk: str, cfg: Config, format_suffix: str = "", extra_prompt: str = ""
+) -> list[dict]:
     system = _SYSTEM_PROMPT + format_suffix
     if cfg.language and cfg.language != "en":
-        system += f"\n\nOUTPUT LANGUAGE: {cfg.language}. Write ALL notes and content in this language."
+        system += (
+            f"\n\nOUTPUT LANGUAGE: {cfg.language}. Write ALL notes and content in this language."
+        )
     if extra_prompt:
         system += f"\n\nAdditional instructions:\n{extra_prompt}"
     return [
         {"role": "system", "content": system},
         {"role": "user", "content": _USER_PROMPT_TEMPLATE.format(chunk=chunk)},
     ]
-
 
 
 _COMPRESS_PROMPT = """\
@@ -269,11 +278,17 @@ def compress_notes(notes: str, target_tokens: int, cfg: Config) -> str:
 def _validate_and_nudge(cfg: Config, base_messages: list[dict], response: str) -> str:
     if "TAGS:" in response.upper():
         return response
-        
+
     log_to_dashboard("[yellow]Nudging model for missing tags...[/]")
     nudge_messages = base_messages + [
         {"role": "assistant", "content": response},
-        {"role": "user", "content": "IMPORTANT: You forgot the TAGS: line. Rewrite ONLY the TAGS: line for the notes above (3-8 lowercase hyphenated tags)."}
+        {
+            "role": "user",
+            "content": (
+                "IMPORTANT: You forgot the TAGS: line. "
+                "Rewrite ONLY the TAGS: line for the notes above (3-8 lowercase hyphenated tags)."
+            ),
+        },
     ]
     tags_only = _call_with_retry(cfg, nudge_messages)
     if "TAGS:" in tags_only.upper():
@@ -299,10 +314,7 @@ def generate_notes(
 
         enc = tiktoken.get_encoding("cl100k_base")
         total_tokens = sum(len(enc.encode(c)) for c in chunks)
-        logger.debug(
-            f"notegen: {len(chunks)} chunk(s), ~{total_tokens} tokens, "
-            f"model={cfg.model}"
-        )
+        logger.debug(f"notegen: {len(chunks)} chunk(s), ~{total_tokens} tokens, model={cfg.model}")
 
     if len(chunks) == 1:
         with Progress(
@@ -338,7 +350,9 @@ def generate_notes(
                 idx = future_to_idx[future]
                 res = future.result()
                 # Validation nudge for each chunk
-                res = _validate_and_nudge(cfg, _make_messages(chunks[idx], cfg, fmt_suffix, extra), res)
+                res = _validate_and_nudge(
+                    cfg, _make_messages(chunks[idx], cfg, fmt_suffix, extra), res
+                )
                 results[idx] = res
                 bar.advance(task)
 

@@ -5,11 +5,9 @@ import sys
 from datetime import date
 from pathlib import Path
 
-from loguru import logger
-
 from notes_gen.config import Config
 from notes_gen.output.formats import format_notes
-from notes_gen.output.formatter import build_frontmatter, slugify
+from notes_gen.output.formatter import build_frontmatter, generate_toc, slugify
 from notes_gen.output.writer import write_note
 from notes_gen.processing.chunker import chunk_text
 from notes_gen.processing.filter import remove_meta
@@ -36,29 +34,33 @@ def _normalize(text: str) -> str:
 
 def run_text_pipeline(source: str, cfg: Config) -> Path:
     from notes_gen.cache import get_notes_cache, set_notes_cache
-    from notes_gen.output.runner import use_dashboard, log_to_dashboard, update_dashboard_stats
+    from notes_gen.output.runner import log_to_dashboard, update_dashboard_stats, use_dashboard
     from notes_gen.processing.chunker import count_tokens
     from notes_gen.processing.dry_run import _cost_str
 
-    title = "stdin-notes" if source == "-" else Path(source).stem.replace("_", " ").replace("-", " ").title()
-    
-    with use_dashboard(f"Text: {title}", cfg) as db:
+    title = (
+        "stdin-notes"
+        if source == "-"
+        else Path(source).stem.replace("_", " ").replace("-", " ").title()
+    )
+
+    with use_dashboard(f"Text: {title}", cfg) as _db:
         log_to_dashboard(f"Reading source: {source}")
         raw = read_text(source)
-        
+
         log_to_dashboard("Filtering content...")
         filtered = remove_meta(raw)
-        
+
         tokens = count_tokens(filtered)
         update_dashboard_stats(tokens, _cost_str(tokens, cfg.model))
-        
+
         chunks = chunk_text(filtered, max_tokens=12000, overlap=200)
 
         if cfg.dry_run:
-            import typer
             from notes_gen.processing.dry_run import print_dry_run_summary
+
             print_dry_run_summary(title, source, chunks, cfg.model)
-            raise typer.Exit(0)
+            raise SystemExit(0)
 
         cache_key = source if source != "-" else raw[:200]
         if cfg.cache:
@@ -80,6 +82,8 @@ def run_text_pipeline(source: str, cfg: Config) -> Path:
         if cfg.max_output_tokens > 0:
             notes = compress_notes(notes, cfg.max_output_tokens, cfg)
         notes = format_notes(notes, cfg.output_format)
+        if cfg.toc:
+            notes = generate_toc(notes)
 
         slug = slugify(title) or "notes"
         frontmatter = build_frontmatter(
