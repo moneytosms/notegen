@@ -683,7 +683,7 @@ def config_validate() -> None:
         _fail(f"Config file not found: {DEFAULT_CONFIG_PATH}")
     else:
         try:
-            cfg = load_config()
+            cfg = load_config(DEFAULT_CONFIG_PATH)
             _pass("Config file loaded")
             _pass(f"Active model: {cfg.model}")
             _pass(f"Output directory: {cfg.output_dir}")
