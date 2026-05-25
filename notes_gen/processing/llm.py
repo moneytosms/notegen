@@ -4,13 +4,16 @@ import random
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Any, cast
 
 import httpx
 import litellm
 from rich.console import Console
 from rich.progress import BarColumn, Progress, SpinnerColumn, TaskProgressColumn, TextColumn
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception, stop_after_delay
 
 from notes_gen.config import Config
+from notes_gen.output.runner import log_to_dashboard
 
 _console = Console(stderr=True)
 
@@ -137,7 +140,7 @@ def _provider(model: str) -> str:
     return model.split("/")[0] if "/" in model else model
 
 
-def _is_rate_limit_error(exc: Exception) -> bool:
+def _is_rate_limit_error(exc: BaseException) -> bool:
     name = type(exc).__name__.lower()
     msg = str(exc).lower()
     return (
@@ -149,7 +152,7 @@ def _is_rate_limit_error(exc: Exception) -> bool:
     )
 
 
-def _is_network_error(exc: Exception) -> bool:
+def _is_network_error(exc: BaseException) -> bool:
     if isinstance(exc, (httpx.TimeoutException, httpx.ConnectError, ConnectionError, TimeoutError)):
         return True
     msg = str(exc).lower()
@@ -179,50 +182,38 @@ def _parse_retry_after(exc: Exception) -> float | None:
     )
     return float(m.group(1)) if m else None
 
+from loguru import logger
 
 def _call_with_retry(cfg: Config, messages: list[dict]) -> str:
-    for attempt in range(cfg.max_retries + 1):
+    @retry(
+        stop=(stop_after_attempt(cfg.max_retries + 1) | stop_after_delay(300)),
+        wait=wait_exponential(multiplier=cfg.retry_base_delay, min=1, max=60),
+        retry=(retry_if_exception(_is_rate_limit_error) | retry_if_exception(_is_network_error)),
+        before_sleep=lambda retry_state: logger.warning(
+            f"Retrying LLM call ({retry_state.attempt_number}/{cfg.max_retries})... "
+            f"Error: {retry_state.outcome.exception()}"
+        ) if retry_state.outcome and retry_state.outcome.failed else None
+    )
+
+    def _do_call() -> str:
         available = _available_keys(cfg)
         api_key = random.choice(available) if available else cfg.pick_api_key()
-
+        
+        kwargs: dict = {"model": cfg.model, "messages": messages, "temperature": 0.3}
+        if api_key:
+            kwargs["api_key"] = api_key
+        if cfg.api_base:
+            kwargs["api_base"] = cfg.api_base
+            
         try:
-            kwargs: dict = {"model": cfg.model, "messages": messages, "temperature": 0.3}
-            if api_key:
-                kwargs["api_key"] = api_key
-            response = litellm.completion(**kwargs)
-            return response.choices[0].message.content
-
+            response = cast(Any, litellm.completion(**kwargs))
+            return cast(str, response.choices[0].message.content)
         except Exception as exc:
-            is_rate = _is_rate_limit_error(exc)
-            is_network = _is_network_error(exc)
-            if (not is_rate and not is_network) or attempt >= cfg.max_retries:
-                raise
+            if _is_rate_limit_error(exc):
+                _cooldown_key(api_key, 60) # Cooldown on 429
+            raise
 
-            backoff = cfg.retry_base_delay * (2**attempt)
-
-            if is_rate:
-                _cooldown_key(api_key, backoff)
-                still_available = _available_keys(cfg)
-                if still_available:
-                    _console.print(
-                        f"[yellow]Rate limited — rotating to another key "
-                        f"(attempt {attempt + 1}/{cfg.max_retries})...[/yellow]"
-                    )
-                    continue
-                wait = _parse_retry_after(exc) or backoff
-                _console.print(
-                    f"[yellow]Rate limited on {_provider(cfg.model)} — "
-                    f"waiting {wait:.0f}s (attempt {attempt + 1}/{cfg.max_retries})...[/yellow]"
-                )
-                time.sleep(wait)
-            else:
-                _console.print(
-                    f"[yellow]Network error — retrying in {backoff:.0f}s "
-                    f"(attempt {attempt + 1}/{cfg.max_retries})...[/yellow]"
-                )
-                time.sleep(backoff)
-
-    raise RuntimeError("Max retries exceeded")  # pragma: no cover
+    return _do_call()
 
 
 _TAGS_RE = re.compile(r"\nTAGS:\s*(.+)$", re.IGNORECASE)
@@ -237,14 +228,17 @@ def _extract_tags(text: str) -> tuple[str, list[str]]:
     return clean, tags
 
 
-def _make_messages(chunk: str, format_suffix: str = "", extra_prompt: str = "") -> list[dict]:
+def _make_messages(chunk: str, cfg: Config, format_suffix: str = "", extra_prompt: str = "") -> list[dict]:
     system = _SYSTEM_PROMPT + format_suffix
+    if cfg.language and cfg.language != "en":
+        system += f"\n\nOUTPUT LANGUAGE: {cfg.language}. Write ALL notes and content in this language."
     if extra_prompt:
         system += f"\n\nAdditional instructions:\n{extra_prompt}"
     return [
         {"role": "system", "content": system},
         {"role": "user", "content": _USER_PROMPT_TEMPLATE.format(chunk=chunk)},
     ]
+
 
 
 _COMPRESS_PROMPT = """\
@@ -272,6 +266,21 @@ def compress_notes(notes: str, target_tokens: int, cfg: Config) -> str:
     return _call_with_retry(cfg, messages)
 
 
+def _validate_and_nudge(cfg: Config, base_messages: list[dict], response: str) -> str:
+    if "TAGS:" in response.upper():
+        return response
+        
+    log_to_dashboard("[yellow]Nudging model for missing tags...[/]")
+    nudge_messages = base_messages + [
+        {"role": "assistant", "content": response},
+        {"role": "user", "content": "IMPORTANT: You forgot the TAGS: line. Rewrite ONLY the TAGS: line for the notes above (3-8 lowercase hyphenated tags)."}
+    ]
+    tags_only = _call_with_retry(cfg, nudge_messages)
+    if "TAGS:" in tags_only.upper():
+        return f"{response}\n\n{tags_only}"
+    return response
+
+
 def generate_notes(
     chunks: list[str],
     cfg: Config,
@@ -290,9 +299,9 @@ def generate_notes(
 
         enc = tiktoken.get_encoding("cl100k_base")
         total_tokens = sum(len(enc.encode(c)) for c in chunks)
-        _console.print(
-            f"[dim]notegen: {len(chunks)} chunk(s), ~{total_tokens} tokens, "
-            f"model={cfg.model}[/dim]",
+        logger.debug(
+            f"notegen: {len(chunks)} chunk(s), ~{total_tokens} tokens, "
+            f"model={cfg.model}"
         )
 
     if len(chunks) == 1:
@@ -303,7 +312,9 @@ def generate_notes(
             console=_console,
         ) as bar:
             bar.add_task(f"Generating via {cfg.model}", total=None)
-            raw = _call_with_retry(cfg, _make_messages(chunks[0], fmt_suffix, extra))
+            msgs = _make_messages(chunks[0], cfg, fmt_suffix, extra)
+            raw = _call_with_retry(cfg, msgs)
+            raw = _validate_and_nudge(cfg, msgs, raw)
         return _extract_tags(raw)
 
     results: list[str | None] = [None] * len(chunks)
@@ -320,12 +331,15 @@ def generate_notes(
         task = bar.add_task(f"Generating via {cfg.model}", total=len(chunks))
         with ThreadPoolExecutor(max_workers=workers) as pool:
             future_to_idx = {
-                pool.submit(_call_with_retry, cfg, _make_messages(chunk, fmt_suffix, extra)): i
+                pool.submit(_call_with_retry, cfg, _make_messages(chunk, cfg, fmt_suffix, extra)): i
                 for i, chunk in enumerate(chunks)
             }
             for future in as_completed(future_to_idx):
                 idx = future_to_idx[future]
-                results[idx] = future.result()
+                res = future.result()
+                # Validation nudge for each chunk
+                res = _validate_and_nudge(cfg, _make_messages(chunks[idx], cfg, fmt_suffix, extra), res)
+                results[idx] = res
                 bar.advance(task)
 
     all_tags: list[str] = []

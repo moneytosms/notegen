@@ -1,305 +1,115 @@
-# notegen
+# notegen 🚀
 
-[![CI](https://github.com/moneytosms/notegen/actions/workflows/ci.yml/badge.svg)](https://github.com/moneytosms/notegen/actions/workflows/ci.yml)
+Convert YouTube videos, playlists, and web pages into beautifully formatted, domain-expert level Obsidian notes using LLMs.
 
-Convert YouTube videos, playlists, and web pages into rich Obsidian-flavored markdown notes using LLMs. Supports English, Hindi, and Malayalam YouTube videos — all notes generated in English.
+[![Tests](https://github.com/moneytosms/notegen/actions/workflows/ci.yml/badge.svg)](https://github.com/moneytosms/notegen/actions/workflows/ci.yml)
+[![Version](https://img.shields.io/badge/version-2.4.0-blue)](https://github.com/moneytosms/notegen)
 
-## Install
+---
 
+## ✨ Key Features
+
+### 🧠 Domain-Expert Notes
+*   **Deep Dives**: Not just summaries—full lecture notes with mechanisms, intuitions, and worked examples.
+*   **Rich Formatting**: Automatic tables, MathJax ($x^2$), Mermaid diagrams, and code blocks.
+*   **Obsidian Ready**: Full support for [[Wikilinks]], callouts (`> [!TIP]`), and YAML frontmatter.
+
+### 🎥 Multimedia & Web Power
+*   **YouTube Chapters**: Automatically uses video chapters to inform note structure.
+*   **Smart Web Crawl**: Recursively crawls documentation or articles, extracting clean content while skipping nav/footers.
+*   **Image Handling**: Automatically extracts and downloads primary images to a local `assets/` folder.
+
+### 🛠️ Advanced Tooling
+*   **Interactive Mode**: A guided wizard to build your note-generation pipeline (`notegen interactive`).
+*   **Prompt Templates**: Reusable styles (e.g., `--template code` vs `--template theory`) defined in your config.
+*   **Multi-Language**: Support for 50+ languages via YouTube translation and LLM output directives.
+*   **Export Formats**: Generate **PDF**, **HTML**, or **DOCX** versions of your notes on the fly.
+*   **Rich Dashboard**: Real-time progress dashboard with token tracking and cost estimation.
+
+### 🛡️ Reliability & Speed
+*   **Local LLM Support**: Use Ollama or LM Studio via LiteLLM for private, free note generation.
+*   **Advanced Retries**: Automatic exponential backoff and rate-limit rotation using `tenacity`.
+*   **Pydantic Config**: Robust validation of your `config.yaml`.
+*   **Lightning Fast**: Powered by `uv`, `loguru`, and `anyio` for high-concurrency operations.
+
+---
+
+## 🚀 Quick Start
+
+### 1. Installation
 ```bash
+# Install via uv (recommended)
+uv tool install notegen
+
+# Or via pip
 pip install notegen
 ```
 
-## Quick start
-
+### 2. Setup
+Run the interactive setup wizard to configure your LLM provider (Groq, Anthropic, Gemini, OpenAI, etc.):
 ```bash
-# 1. Run the setup wizard (choose provider, add API key, verify connection)
 notegen setup
-
-# 2. Generate notes
-notegen https://youtube.com/watch?v=...
 ```
 
-## Usage
-
+### 3. Usage
 ```bash
-# Auto-detect source type (bare URL or file)
-notegen https://youtube.com/watch?v=...
-notegen https://youtube.com/playlist?list=...
-notegen https://example.com/article
-notegen transcript.txt
+# Auto-detect and generate (Video, Web, or File)
+notegen https://www.youtube.com/watch?v=dQw4w9WgXcQ
 
-# Explicit commands
-notegen video <youtube-url>
-notegen playlist <playlist-url> [--force] [--force-restart]
-notegen web <url>
-notegen text <file-or-stdin>
-notegen text -                          # stdin
+# Launch the interactive wizard
+notegen interactive
 
-# First-time setup
-notegen setup                           # guided wizard
+# Crawl a documentation site and export to PDF
+notegen web https://docs.python.org/3/ --export pdf
 
-# Watch a folder — auto-process new .txt/.md files
-notegen watch ./inbox
-
-# Dry run — estimate tokens/cost without calling LLM
-notegen -n https://youtube.com/watch?v=...
-notegen video <url> --dry-run
-
-# Output format
-notegen video <url> --format logseq
-notegen web <url> --format plain
-
-# Extra prompt guidance
-notegen video <url> --prompt "Focus on practical setup steps and specific tool names"
-notegen web <url> -p "Include comparisons to alternatives for every tool mentioned"
-
-# Config
-notegen config init      # create config file
-notegen config open      # open config in your default editor
-notegen config show      # print resolved config
-notegen config validate  # check structure + API key presence
-notegen doctor           # config check + real test API call
-
-# Cache
-notegen cache clear      # remove ~/.cache/notegen/
+# Process a playlist skipping already-done videos
+notegen playlist <playlist_url> --incremental
 ```
 
-## Options
+---
 
-| Flag | Description |
-|---|---|
-| `--version` | Print version and exit |
-| `-o / --output-dir PATH` | Override output directory |
-| `-m / --model TEXT` | LiteLLM model string (e.g. `groq/llama-3.3-70b-versatile`) |
-| `-v / --verbose` | Show chunk count, token usage, model/key selection, crawl status |
-| `--no-mermaid` | Disable mermaid diagram generation |
-| `--no-cache` | Skip cache read/write for this run |
-| `-n / --dry-run` | Print token/cost estimate; skip LLM call |
-| `--format TEXT` | Output format: `obsidian` (default) · `logseq` · `plain` · `roam` |
-| `-p / --prompt TEXT` | Extra instructions appended to the LLM prompt |
-| `--force` | Skip playlist videos without captions instead of aborting |
-| `--force-restart` | Ignore playlist resume file, reprocess all videos |
+## ⚙️ Configuration
 
-## Config file
-
-### Location
-
-| OS | Path |
-|---|---|
-| Linux | `~/.config/notes-gen/config.yaml` |
-| macOS | `~/.config/notes-gen/config.yaml` |
-| Windows | `%USERPROFILE%\.config\notes-gen\config.yaml` |
-
-Run `notegen setup` (recommended) for guided configuration, or `notegen config init` to generate a fully-commented template then `notegen config open` to edit it.
-
-### Full reference (`~/.config/notes-gen/config.yaml`)
+Your config lives at `~/.config/notes-gen/config.yaml`. You can define custom templates there:
 
 ```yaml
-# Active model — format: <provider>/<model-name>
-model: anthropic/claude-sonnet-4-6
-
-# Output
-output_dir: ~/notes
-mermaid: true
-
-# Output format: obsidian (default) | logseq | plain | roam
-output_format: obsidian
-
-# Caching — transcripts + LLM output cached in ~/.cache/notegen/
-# Set to false to always re-fetch and re-generate
-cache: true
-
-# Token budget — compress output if it exceeds this many tokens (0 = no limit)
-max_output_tokens: 0
-
-# Fuzzy dedup — skip near-duplicate sections in merged notes (Jaccard threshold)
-merger_similarity_threshold: 0.7
-
-# API key rotation — add multiple keys per provider.
-# notegen picks one at random each request (useful for free-tier rate limits).
-api_keys:
-  anthropic:
-    - sk-ant-api03-KEY1
-    - sk-ant-api03-KEY2   # second key rotated in automatically
-  groq:
-    - gsk_KEY1
-  openai:
-    - sk-proj-KEY1
-  gemini:
-    - AIzaSyKEY1
-  nvidia_nim:
-    - nvapi-KEY1
-  mistral:
-    - KEY1
-  cohere:
-    - KEY1
-  together_ai:
-    - KEY1
-  deepseek:
-    - sk-KEY1
-  perplexity:
-    - pplx-KEY1
-  xai:
-    - xai-KEY1
-
-# Web crawl limits
-max_concurrent: 5
-web_max_pages: 50
-web_max_depth: 3
-
-# Rate limiting & retry (important for free-tier providers like Groq, Gemini)
-max_retries: 5
-retry_base_delay: 60.0   # seconds; backoff = base * 2^attempt
+prompt_templates:
+  code: "Focus heavily on implementation details and syntax."
+  theory: "Focus on high-level architecture and design patterns."
 ```
 
-### Supported providers
+Use them via:
+```bash
+notegen video <url> --template code
+```
 
-| Provider | Model string example |
-|---|---|
-| Anthropic | `anthropic/claude-sonnet-4-6` |
-| OpenAI | `openai/gpt-4o` |
-| Groq | `groq/llama-3.3-70b-versatile` |
-| Google Gemini | `gemini/gemini-2.0-flash` |
-| NVIDIA NIM (free tier) | `nvidia_nim/meta/llama-3.1-70b-instruct` |
-| Mistral | `mistral/mistral-large-latest` |
-| Cohere | `cohere/command-r-plus` |
-| Together AI | `together_ai/meta-llama/Llama-3-70b-chat-hf` |
-| DeepSeek | `deepseek/deepseek-chat` |
-| Perplexity | `perplexity/sonar-pro` |
-| xAI (Grok) | `xai/grok-2` |
-| Ollama (local) | `ollama/llama3` |
+---
 
-Any provider supported by [LiteLLM](https://docs.litellm.ai/docs/providers) works.
+## 📊 Dashboard
 
-## Env var API keys
+The **Rich Dashboard** provides a real-time view of your processing pipeline:
+- **Activity Log**: Every step from fetching to merging.
+- **Progress Bars**: Overall status for playlists or crawls.
+- **Live Stats**: Cumulative tokens processed and estimated USD cost.
 
-As an alternative to the config file, set `NOTEGEN_<PROVIDER>_KEY` env vars. These are used as fallback when no keys are configured for a provider:
+---
+
+## 🧪 Development & Type Safety
+
+`notegen` is built with modern engineering standards:
+- **Type Checking**: Verified with **Pyrefly** (Meta).
+- **Logging**: High-performance structured logs with **Loguru**.
+- **Testing**: Comprehensive suite with 150+ tests.
 
 ```bash
-export NOTEGEN_GROQ_KEY=gsk_...
-export NOTEGEN_ANTHROPIC_KEY=sk-ant-...
-export NOTEGEN_GEMINI_KEY=AIzaSy...
+# Run type check
+uv run pyrefly check
+
+# Run tests
+uv run pytest
 ```
 
-Config keys take priority over env vars. Env vars are useful for CI or server use.
+---
 
-## Caching
-
-Transcripts and LLM-generated notes are cached in `~/.cache/notegen/` (keyed on URL + model). Re-running the same source skips fetch and LLM calls entirely.
-
-```bash
-notegen video <url>          # first run: fetches + generates + caches
-notegen video <url>          # second run: serves from cache instantly
-notegen video <url> --no-cache   # bypass cache for this run
-notegen cache clear          # wipe all cached files
-```
-
-## Dry run
-
-Estimate tokens and cost before committing to a run:
-
-```bash
-notegen -n https://youtube.com/playlist?list=...
-```
-
-Prints a Rich table with chunk count, token count, estimated cost, and estimated generation time. No LLM calls are made, no files are written.
-
-## Output formats
-
-Use `--format` to target different note-taking apps:
-
-| Format | Syntax style |
-|---|---|
-| `obsidian` (default) | `[[wikilinks]]`, `> [!TIP]` callouts, mermaid diagrams |
-| `logseq` | Bullet-based, `#+BEGIN_TIP` blocks |
-| `plain` | Clean markdown, no app-specific syntax |
-| `roam` | `#[[hashtag refs]]` |
-
-## Watch mode
-
-Drop files into a folder and notegen auto-processes them:
-
-```bash
-notegen watch ./inbox --output-dir ./notes
-```
-
-- Processes existing unprocessed `.txt`/`.md` files on startup
-- Watches for new files; processes each as it appears
-- Tracks processed files in `.watch-state.json` (won't reprocess on restart)
-- Ctrl+C exits cleanly
-
-## Playlist resume
-
-Long playlists are resumable. Progress is saved to `.progress.json` in the output folder after each video. If a run is interrupted, re-running the same command skips already-completed videos.
-
-```bash
-notegen playlist <url>            # resumes from where it left off
-notegen playlist <url> --force-restart   # ignore progress, reprocess all
-```
-
-## Rate limiting
-
-Free-tier providers (Groq, Gemini, Together AI, etc.) enforce strict TPM/RPM limits. notegen handles 429 errors automatically:
-
-1. Cools down the offending key and rotates to another available key immediately.
-2. If all keys for the provider are exhausted, waits using the `Retry-After` header value (if present) or exponential backoff (`retry_base_delay * 2^attempt`), then retries.
-
-With the defaults (`max_retries: 5`, `retry_base_delay: 60`), the wait sequence is 60s → 120s → 240s → 480s → 960s. Adding multiple API keys from different free accounts is the most effective way to stay under limits.
-
-## Output format
-
-Obsidian-flavored markdown (default):
-- YAML frontmatter (`title`, `source`, `type`, `tags`, `date`)
-- `#` → `##` → `###` heading hierarchy following source narrative
-- `___` horizontal dividers between major topic shifts
-- `> blockquote` for quotes, definitions, memorable statements
-- `$formula$` inline LaTeX · `$$formula$$` block equations
-- Callouts — used where content genuinely warrants them:
-  `> [!TIP]` `> [!NOTE]` `> [!INFO]` `> [!WARNING]` `> [!CAUTION]`
-  `> [!DANGER]` `> [!EXAMPLE]` `> [!QUESTION]` `> [!QUOTE]` `> [!CITE]`
-- Mermaid diagrams for system topology, data flows, architectures
-- Markdown tables for comparisons and feature matrices
-- `[[wikilinks]]` for cross-references to related concepts
-- `**bold**` key terms · `_italic_` emphasis · `` `inline code` `` for commands/flags/values
-- Fenced code blocks with language tags
-- Tags auto-inferred by LLM from content
-- Playlist → folder + `index.md` with wikilinks to each video note
-
-## Language support
-
-YouTube transcripts are fetched and processed in this order:
-
-1. **English** — used directly (`en`, `en-US`, `en-GB`)
-2. **Hindi** (`hi`) — auto-translated to English via YouTube's translation API
-3. **Malayalam** (`ml`) — auto-translated to English via YouTube's translation API
-
-Translation uses YouTube's own built-in API (no extra key or dependency needed). Notes are always written in English regardless of source language. Videos with no captions in any supported language fail with an error (or are skipped in playlists with `--force`).
-
-## Requirements
-
-- Python ≥ 3.11
-- API key for at least one supported LLM provider
-
-## Development
-
-```bash
-uv sync --dev        # install all deps including dev
-uv run pytest        # run tests
-uv run ruff check .  # lint
-uv run ruff format . # format
-```
-
-### CI
-
-GitHub Actions runs on every push to `main` or `sms/**` branches and on pull requests to `main`.
-
-Pipeline (`.github/workflows/ci.yml`):
-
-| Step | Command |
-|---|---|
-| Format check | `ruff format --check .` |
-| Lint | `ruff check .` |
-| Test | `pytest tests/ -q --tb=short` |
-
-Matrix: Python 3.11 and 3.12 on `ubuntu-latest`.
+## 📄 License
+MIT

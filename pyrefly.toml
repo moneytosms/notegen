@@ -1,0 +1,11 @@
+project-includes = [
+    "notes_gen",
+    "tests",
+]
+project-excludes = ["**/__pycache__"]
+python-version = "3.12.0"
+infer-with-first-use = false
+
+[errors]
+untyped-import = "ignore"
+missing-import = "error"

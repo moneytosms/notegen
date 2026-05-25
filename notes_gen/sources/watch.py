@@ -4,15 +4,13 @@ import json
 from pathlib import Path
 
 import typer
-from rich.console import Console
+from loguru import logger
 from watchfiles import watch
 
 from notes_gen.config import Config
 
 _STATE_FILE = ".watch-state.json"
 _WATCH_EXTENSIONS = {".txt", ".md"}
-
-_console = Console()
 
 
 def _load_state(watch_dir: Path) -> set[str]:
@@ -36,17 +34,17 @@ def _process_file(path: Path, cfg: Config) -> bool:
 
     try:
         output = run_text_pipeline(str(path), cfg)
-        _console.print(f"  [green]✓[/] {path.name} → {output.name}")
+        logger.info(f"Processed: {path.name} → {output.name}")
         return True
     except Exception as exc:
-        _console.print(f"  [red]✗[/] {path.name}: {exc}")
+        logger.error(f"Failed to process {path.name}: {exc}")
         return False
 
 
 def run_watch(watch_dir: Path, cfg: Config) -> None:
     processed = _load_state(watch_dir)
-    _console.print(f"\n[bold cyan]notegen watch[/] — monitoring [green]{watch_dir}[/]\n")
-    _console.print("  Press [bold]Ctrl+C[/] to stop.\n")
+    logger.info(f"Monitoring directory: {watch_dir}")
+    logger.info("Press Ctrl+C to stop.")
 
     # process any existing unprocessed files first
     for path in sorted(watch_dir.iterdir()):
@@ -61,7 +59,7 @@ def run_watch(watch_dir: Path, cfg: Config) -> None:
 
     try:
         for changes in watch(str(watch_dir), watch_filter=_change_filter):
-            for change_type, changed_path in changes:
+            for _, changed_path in changes:
                 path = Path(changed_path)
                 if (
                     path.suffix in _WATCH_EXTENSIONS
@@ -73,7 +71,7 @@ def run_watch(watch_dir: Path, cfg: Config) -> None:
                         processed.add(str(path))
                         _save_state(watch_dir, processed)
     except KeyboardInterrupt:
-        _console.print("\n[dim]Watch stopped.[/]\n")
+        logger.info("Watch stopped.")
         raise typer.Exit(0)
 
 

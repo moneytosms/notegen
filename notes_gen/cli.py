@@ -1,13 +1,15 @@
 import logging
+import os
 import platform
 import subprocess
+import time
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional, cast
 
+import litellm
 import typer
 import yaml
-
-logging.getLogger("LiteLLM").setLevel(logging.ERROR)
+from loguru import logger
 
 from notes_gen.config import (
     CONFIG_TEMPLATE,
@@ -16,6 +18,9 @@ from notes_gen.config import (
     load_config,
     merge_cli_overrides,
 )
+from notes_gen.logger import setup_logger
+
+logging.getLogger("LiteLLM").setLevel(logging.ERROR)
 
 app = typer.Typer(no_args_is_help=False, help="Convert YouTube/web content to Obsidian notes.")
 config_app = typer.Typer(help="Manage configuration.")
@@ -34,55 +39,8 @@ _KNOWN_SUBCOMMANDS = {
     "doctor",
     "watch",
     "setup",
+    "interactive",
 }
-
-_KNOWN_CONFIG_FIELDS = {
-    "output_dir",
-    "mermaid",
-    "model",
-    "api_keys",
-    "max_concurrent",
-    "web_max_pages",
-    "web_max_depth",
-    "max_retries",
-    "retry_base_delay",
-    "verbose",
-    "cache",
-    "max_output_tokens",
-    "merger_similarity_threshold",
-    "output_format",
-    "extra_prompt",
-}
-
-_PROVIDER_TEST_MODELS = {
-    "anthropic": "anthropic/claude-haiku-4-5-20251001",
-    "openai": "openai/gpt-4o-mini",
-    "groq": "groq/llama-3.3-70b-versatile",
-    "gemini": "gemini/gemini-2.0-flash",
-    "nvidia_nim": "nvidia_nim/meta/llama-3.3-70b-instruct",
-    "mistral": "mistral/mistral-small-latest",
-    "deepseek": "deepseek/deepseek-chat",
-    "together_ai": "together_ai/meta-llama/Llama-3-70b-chat-hf",
-    "ollama": "ollama/llama3",
-    "xai": "xai/grok-2",
-    "cohere": "cohere/command-r-plus",
-    "perplexity": "perplexity/sonar",
-}
-
-_PROVIDER_LIST = [
-    ("groq", "free tier, fast (recommended)"),
-    ("nvidia_nim", "free tier — build.nvidia.com"),
-    ("gemini", "free tier"),
-    ("anthropic", "paid"),
-    ("openai", "paid"),
-    ("mistral", "paid"),
-    ("deepseek", "paid"),
-    ("together_ai", "paid"),
-    ("xai", "paid"),
-    ("cohere", "paid"),
-    ("perplexity", "paid"),
-    ("ollama", "local, no key needed"),
-]
 
 
 def _get_version() -> str:
@@ -103,257 +61,67 @@ def _get_version() -> str:
         return "dev"
 
 
-def _run_auto(source: str, cfg: Config, force: bool = False) -> None:
+def _export_note(path: Path, fmt: str) -> None:
+    import pypandoc
+
+    out_path = path.with_suffix(f".{fmt}")
+    logger.info(f"Exporting {path.name} to {fmt}...")
+    try:
+        # Check if pandoc is available
+        try:
+            pypandoc.get_pandoc_version()
+        except OSError:
+            logger.error("Pandoc not found on system. Please install pandoc to use --export.")
+            return
+
+        pypandoc.convert_file(str(path), fmt, outputfile=str(out_path))
+        logger.info(f"Exported: {out_path}")
+    except Exception as e:
+        logger.error(f"Failed to export {fmt}: {e}")
+
+
+def _run_auto(
+    source: str,
+    cfg: Config,
+    force: bool = False,
+    force_restart: bool = False,
+    export: Optional[str] = None,
+) -> None:
+    path: Optional[Path] = None
     if "youtube.com/playlist" in source or ("list=" in source and "youtube.com" in source):
         from notes_gen.sources.youtube import run_playlist_pipeline
 
-        index_path = run_playlist_pipeline(source, cfg, force=force)
-        typer.echo(f"Playlist notes written to {index_path.parent}")
+        path = run_playlist_pipeline(source, cfg, force=force, force_restart=force_restart)
     elif "youtube.com/watch" in source or "youtu.be/" in source:
         from notes_gen.sources.youtube import run_video_pipeline
 
-        output_path = run_video_pipeline(source, cfg)
-        typer.echo(f"Notes written to {output_path}")
+        path = run_video_pipeline(source, cfg)
     elif source.startswith("http://") or source.startswith("https://"):
         from notes_gen.sources.web import run_web_crawl_pipeline
 
-        output_path = run_web_crawl_pipeline(source, cfg)
-        typer.echo(f"Notes written to {output_path}")
+        path = run_web_crawl_pipeline(source, cfg)
     else:
         from notes_gen.sources.text import run_text_pipeline
 
-        output_path = run_text_pipeline(source, cfg)
-        typer.echo(f"Notes written to {output_path}")
+        path = run_text_pipeline(source, cfg)
+
+    if export and path:
+        _export_note(path, export)
 
 
-@cache_app.command("clear")
-def cache_clear() -> None:
-    """Remove all cached transcripts and notes from ~/.cache/notegen/."""
-    from notes_gen.cache import clear_cache
-
-    n = clear_cache()
-    typer.echo(f"Cleared {n} cache file(s).")
+def version_callback(value: bool):
+    if value:
+        typer.echo(f"notegen {_get_version()}")
+        raise typer.Exit()
 
 
-@config_app.command("init")
-def config_init() -> None:
-    """Create default config at ~/.config/notes-gen/config.yaml."""
-    if DEFAULT_CONFIG_PATH.exists():
-        typer.echo(f"Config already exists: {DEFAULT_CONFIG_PATH}")
-        raise typer.Exit(1)
-    DEFAULT_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    DEFAULT_CONFIG_PATH.write_text(CONFIG_TEMPLATE, encoding="utf-8")
-    typer.echo(f"Config written to {DEFAULT_CONFIG_PATH}")
-    typer.echo("Next: run `notegen config open` to add your API key.")
-    typer.echo("Tip: `notegen setup` is the recommended way to configure notegen")
-
-
-@config_app.command("open")
-def config_open() -> None:
-    """Open config file in your default editor (creates it first if missing)."""
-    if not DEFAULT_CONFIG_PATH.exists():
-        DEFAULT_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        DEFAULT_CONFIG_PATH.write_text(CONFIG_TEMPLATE, encoding="utf-8")
-        typer.echo(f"Config created: {DEFAULT_CONFIG_PATH}")
-
-    typer.echo(f"Opening {DEFAULT_CONFIG_PATH}")
-    system = platform.system()
-    if system == "Windows":
-        import os
-
-        os.startfile(str(DEFAULT_CONFIG_PATH))  # type: ignore[attr-defined]
-    elif system == "Darwin":
-        subprocess.run(["open", str(DEFAULT_CONFIG_PATH)], check=False)
-    else:
-        subprocess.run(["xdg-open", str(DEFAULT_CONFIG_PATH)], check=False)
-
-
-@config_app.command("validate")
-def config_validate() -> None:
-    """Check config file structure, model string, and API key presence."""
-    import os
-
-    from rich.console import Console
-
-    console = Console()
-    ok = True
-
-    def _pass(msg: str) -> None:
-        console.print(f"  [green]✓[/] {msg}")
-
-    def _fail(msg: str) -> None:
-        nonlocal ok
-        ok = False
-        console.print(f"  [red]✗[/] {msg}")
-
-    console.print("\n[bold]notegen config validate[/]\n")
-
-    if not DEFAULT_CONFIG_PATH.exists():
-        _fail(f"Config not found: {DEFAULT_CONFIG_PATH}")
-        console.print()
-        raise typer.Exit(1)
-    _pass(f"Config found: {DEFAULT_CONFIG_PATH}")
-
-    try:
-        raw = yaml.safe_load(DEFAULT_CONFIG_PATH.read_text(encoding="utf-8")) or {}
-    except yaml.YAMLError as e:
-        _fail(f"Invalid YAML: {e}")
-        console.print()
-        raise typer.Exit(1)
-    _pass("Valid YAML")
-
-    unknown = set(raw.keys()) - _KNOWN_CONFIG_FIELDS
-    if unknown:
-        _fail(f"Unknown fields: {', '.join(sorted(unknown))}")
-    else:
-        _pass("No unknown fields")
-
-    model = raw.get("model", "anthropic/claude-sonnet-4-6")
-    if "/" not in str(model):
-        _fail(f"Model string missing provider prefix: {model!r} (expected <provider>/<model>)")
-    else:
-        _pass(f"Model format OK: {model}")
-
-    provider = str(model).split("/")[0]
-    keys = raw.get("api_keys", {})
-    provider_keys = [k for k in keys.get(provider, []) if k and not str(k).startswith("#")]
-    env_var = f"NOTEGEN_{provider.upper().replace('-', '_').replace('/', '_')}_KEY"
-    has_env = bool(os.environ.get(env_var))
-    if provider_keys:
-        _pass(f"API key(s) configured for {provider!r} ({len(provider_keys)} key(s))")
-    elif has_env:
-        _pass(f"API key found via {env_var} env var")
-    else:
-        _fail(f"No API key for provider {provider!r} — add to config or set {env_var}")
-
-    console.print()
-    if ok:
-        console.print("[green]Config is valid.[/]\n")
-        raise typer.Exit(0)
-    else:
-        console.print("[red]Config has issues — fix them before running notegen.[/]\n")
-        raise typer.Exit(1)
-
-
-@config_app.command("show")
-def config_show() -> None:
-    """Print resolved config as YAML."""
-    cfg = load_config()
-    data = {
-        "output_dir": str(cfg.output_dir),
-        "model": cfg.model,
-        "mermaid": cfg.mermaid,
-        "max_concurrent": cfg.max_concurrent,
-        "web_max_pages": cfg.web_max_pages,
-        "web_max_depth": cfg.web_max_depth,
-        "max_retries": cfg.max_retries,
-        "retry_base_delay": cfg.retry_base_delay,
-        "verbose": cfg.verbose,
-    }
-    typer.echo(yaml.dump(data, default_flow_style=False), nl=False)
-
-
-@app.command()
-def doctor(
-    provider: Optional[str] = typer.Option(
-        None, "--provider", help="Test a specific provider (overrides config model)"
+@app.callback()
+def main_callback(
+    version: Optional[bool] = typer.Option(
+        None, "--version", callback=version_callback, is_eager=True, help="Show version and exit"
     ),
-) -> None:
-    """Health check: validate config + make a real test API call."""
-    import time
-
-    import litellm
-    from rich.console import Console
-
-    console = Console()
-    console.print("\n[bold]notegen doctor[/]\n")
-
-    cfg = load_config(DEFAULT_CONFIG_PATH)
-
-    if provider:
-        cfg = merge_cli_overrides(
-            cfg, model=_PROVIDER_TEST_MODELS.get(provider, f"{provider}/unknown")
-        )
-
-    # run config validate inline
-    import os
-
-    ok = True
-
-    def _pass(msg: str) -> None:
-        console.print(f"  [green]✓[/] {msg}")
-
-    def _fail(msg: str) -> None:
-        nonlocal ok
-        ok = False
-        console.print(f"  [red]✗[/] {msg}")
-
-    _pass(f"Config path: {DEFAULT_CONFIG_PATH}")
-    if not DEFAULT_CONFIG_PATH.exists():
-        _fail("Config missing — run: notegen setup")
-        raise typer.Exit(1)
-
-    try:
-        yaml.safe_load(DEFAULT_CONFIG_PATH.read_text(encoding="utf-8"))
-        _pass("Valid YAML")
-    except Exception as e:
-        _fail(f"Invalid YAML: {e}")
-        raise typer.Exit(1)
-
-    model = cfg.model
-    if "/" not in str(model):
-        _fail(f"Model missing provider prefix: {model!r}")
-    else:
-        _pass(f"Model: {model}")
-
-    prov = str(model).split("/")[0]
-    all_keys = [k for k in cfg.api_keys.get(prov, []) if k and not k.startswith("#")]
-    env_var = f"NOTEGEN_{prov.upper().replace('-', '_').replace('/', '_')}_KEY"
-    has_env = bool(os.environ.get(env_var))
-    if all_keys:
-        n = len(all_keys)
-        _pass(f"API keys for {prov!r}: {n} configured")
-    elif has_env:
-        _pass(f"API key via {env_var}")
-    else:
-        _fail(f"No API key for {prov!r}")
-        ok = False
-
-    if not ok:
-        console.print("\n[red]Config issues found — fix before continuing.[/]\n")
-        raise typer.Exit(1)
-
-    # real API call
-    console.print(f"\n[dim]Sending test request to {cfg.model}...[/]")
-    api_key = cfg.pick_api_key()
-    masked = None
-    if all_keys and api_key:
-        idx = all_keys.index(api_key) + 1 if api_key in all_keys else 1
-        masked = f"key-{idx}/{len(all_keys)}"
-
-    try:
-        t0 = time.monotonic()
-        kwargs: dict = {
-            "model": cfg.model,
-            "messages": [{"role": "user", "content": "Reply with the single word: ok"}],
-            "max_tokens": 5,
-            "temperature": 0,
-        }
-        if api_key:
-            kwargs["api_key"] = api_key
-        resp = litellm.completion(**kwargs)
-        latency_ms = int((time.monotonic() - t0) * 1000)
-        reply = resp.choices[0].message.content.strip()
-    except Exception as exc:
-        _fail(f"API call failed: {exc}")
-        console.print("\n[red]Doctor found issues.[/]\n")
-        raise typer.Exit(1)
-
-    _pass(f"API call succeeded — latency {latency_ms}ms, reply: {reply!r}")
-    if masked:
-        _pass(f"Key used: {masked}")
-    console.print("\n[green]Doctor OK — notegen is ready.[/]\n")
-    raise typer.Exit(0)
+):
+    pass
 
 
 @app.command()
@@ -367,6 +135,9 @@ def video(
     no_cache: bool = typer.Option(False, "--no-cache"),
     dry_run: bool = typer.Option(False, "--dry-run", "-n", help="Print estimate; skip LLM"),
     fmt: Optional[str] = typer.Option(None, "--format", help="obsidian|logseq|plain|roam"),
+    lang: Optional[str] = typer.Option(None, "--lang", help="Target language code (e.g. en, es)"),
+    template: Optional[str] = typer.Option(None, "--template", "-t", help="Named prompt template"),
+    export: Optional[str] = typer.Option(None, "--export", help="pdf|html|docx"),
     prompt: Optional[str] = typer.Option(
         None, "--prompt", "-p", help="Extra instructions for LLM prompt"
     ),
@@ -385,9 +156,14 @@ def video(
         dry_run=dry_run or None,
         output_format=fmt,
         extra_prompt=prompt,
+        language=lang,
+        template=template,
     )
-    output_path = run_video_pipeline(url, cfg)
-    typer.echo(f"Notes written to {output_path}")
+    setup_logger(cfg.verbose)
+    logger.info(f"Generating notes for video: {url}")
+    path = run_video_pipeline(url, cfg)
+    if export:
+        _export_note(path, export)
 
 
 @app.command()
@@ -402,6 +178,12 @@ def playlist(
     no_cache: bool = typer.Option(False, "--no-cache"),
     dry_run: bool = typer.Option(False, "--dry-run", "-n", help="Print estimate; skip LLM"),
     fmt: Optional[str] = typer.Option(None, "--format", help="obsidian|logseq|plain|roam"),
+    lang: Optional[str] = typer.Option(None, "--lang", help="Target language code (e.g. en, es)"),
+    incremental: Optional[bool] = typer.Option(
+        None, "--incremental/--no-incremental", help="Skip existing files"
+    ),
+    template: Optional[str] = typer.Option(None, "--template", "-t", help="Named prompt template"),
+    export: Optional[str] = typer.Option(None, "--export", help="pdf|html|docx"),
     prompt: Optional[str] = typer.Option(
         None, "--prompt", "-p", help="Extra instructions for LLM prompt"
     ),
@@ -420,9 +202,15 @@ def playlist(
         dry_run=dry_run or None,
         output_format=fmt,
         extra_prompt=prompt,
+        language=lang,
+        incremental=incremental,
+        template=template,
     )
+    setup_logger(cfg.verbose)
+    logger.info(f"Generating notes for playlist: {url}")
     index_path = run_playlist_pipeline(url, cfg, force=force, force_restart=force_restart)
-    typer.echo(f"Playlist notes written to {index_path.parent}")
+    if export:
+        _export_note(index_path, export)
 
 
 @app.command()
@@ -435,6 +223,9 @@ def web(
     no_cache: bool = typer.Option(False, "--no-cache"),
     dry_run: bool = typer.Option(False, "--dry-run", "-n", help="Print estimate; skip LLM"),
     fmt: Optional[str] = typer.Option(None, "--format", help="obsidian|logseq|plain|roam"),
+    lang: Optional[str] = typer.Option(None, "--lang", help="Target language code (e.g. en, es)"),
+    template: Optional[str] = typer.Option(None, "--template", "-t", help="Named prompt template"),
+    export: Optional[str] = typer.Option(None, "--export", help="pdf|html|docx"),
     prompt: Optional[str] = typer.Option(
         None, "--prompt", "-p", help="Extra instructions for LLM prompt"
     ),
@@ -453,9 +244,14 @@ def web(
         dry_run=dry_run or None,
         output_format=fmt,
         extra_prompt=prompt,
+        language=lang,
+        template=template,
     )
-    output_path = run_web_crawl_pipeline(url, cfg)
-    typer.echo(f"Notes written to {output_path}")
+    setup_logger(cfg.verbose)
+    logger.info(f"Generating notes for web URL: {url}")
+    path = run_web_crawl_pipeline(url, cfg)
+    if export:
+        _export_note(path, export)
 
 
 @app.command()
@@ -468,6 +264,9 @@ def text(
     no_cache: bool = typer.Option(False, "--no-cache"),
     dry_run: bool = typer.Option(False, "--dry-run", "-n", help="Print estimate; skip LLM"),
     fmt: Optional[str] = typer.Option(None, "--format", help="obsidian|logseq|plain|roam"),
+    lang: Optional[str] = typer.Option(None, "--lang", help="Target language code (e.g. en, es)"),
+    template: Optional[str] = typer.Option(None, "--template", "-t", help="Named prompt template"),
+    export: Optional[str] = typer.Option(None, "--export", help="pdf|html|docx"),
     prompt: Optional[str] = typer.Option(
         None, "--prompt", "-p", help="Extra instructions for LLM prompt"
     ),
@@ -486,9 +285,14 @@ def text(
         dry_run=dry_run or None,
         output_format=fmt,
         extra_prompt=prompt,
+        language=lang,
+        template=template,
     )
-    output_path = run_text_pipeline(source, cfg)
-    typer.echo(f"Notes written to {output_path}")
+    setup_logger(cfg.verbose)
+    logger.info(f"Generating notes from text: {source}")
+    path = run_text_pipeline(source, cfg)
+    if export:
+        _export_note(path, export)
 
 
 @app.command()
@@ -499,9 +303,16 @@ def auto(
     no_mermaid: bool = typer.Option(False, "--no-mermaid"),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
     force: bool = typer.Option(False, "--force"),
+    force_restart: bool = typer.Option(False, "--force-restart", help="Ignore progress file"),
     no_cache: bool = typer.Option(False, "--no-cache"),
     dry_run: bool = typer.Option(False, "--dry-run", "-n", help="Print estimate; skip LLM"),
     fmt: Optional[str] = typer.Option(None, "--format", help="obsidian|logseq|plain|roam"),
+    lang: Optional[str] = typer.Option(None, "--lang", help="Target language code (e.g. en, es)"),
+    incremental: Optional[bool] = typer.Option(
+        None, "--incremental/--no-incremental", help="Skip existing files"
+    ),
+    template: Optional[str] = typer.Option(None, "--template", "-t", help="Named prompt template"),
+    export: Optional[str] = typer.Option(None, "--export", help="pdf|html|docx"),
     prompt: Optional[str] = typer.Option(
         None, "--prompt", "-p", help="Extra instructions for LLM prompt"
     ),
@@ -518,8 +329,13 @@ def auto(
         dry_run=dry_run or None,
         output_format=fmt,
         extra_prompt=prompt,
+        language=lang,
+        incremental=incremental,
+        template=template,
     )
-    _run_auto(source, cfg, force=force)
+    setup_logger(cfg.verbose)
+    logger.info(f"Auto-detecting source and generating notes: {source}")
+    _run_auto(source, cfg, force=force, force_restart=force_restart, export=export)
 
 
 @app.command()
@@ -527,31 +343,257 @@ def watch(
     directory: Path = typer.Argument(..., help="Directory to watch for new .txt/.md files"),
     output_dir: Optional[Path] = typer.Option(None, "--output-dir", "-o"),
     model: Optional[str] = typer.Option(None, "--model", "-m"),
+    no_mermaid: bool = typer.Option(False, "--no-mermaid"),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
     no_cache: bool = typer.Option(False, "--no-cache"),
     fmt: Optional[str] = typer.Option(None, "--format", help="obsidian|logseq|plain|roam"),
+    lang: Optional[str] = typer.Option(None, "--lang", help="Target language code (e.g. en, es)"),
+    template: Optional[str] = typer.Option(None, "--template", "-t", help="Named prompt template"),
+    prompt: Optional[str] = typer.Option(
+        None, "--prompt", "-p", help="Extra instructions for LLM prompt"
+    ),
 ) -> None:
-    """Watch a directory and auto-process new .txt/.md files."""
+    """Watch a directory and generate notes for every new text file."""
     from notes_gen.sources.watch import run_watch
 
     cfg = load_config()
     cfg = merge_cli_overrides(
         cfg,
-        output_dir=output_dir or directory,
+        output_dir=output_dir,
         model=model,
+        mermaid=not no_mermaid,
         verbose=verbose,
         cache=not no_cache,
         output_format=fmt,
+        extra_prompt=prompt,
+        language=lang,
+        template=template,
     )
+    setup_logger(cfg.verbose)
     run_watch(directory, cfg)
 
 
+@app.command("interactive")
+def interactive_mode() -> None:
+    """Interactive guided mode — generate notes through prompts."""
+    from rich.console import Console
+    from rich.prompt import Confirm, Prompt
+
+    console = Console()
+    console.print("\n[bold cyan]notegen interactive[/] — guided note generation\n")
+
+    cfg = load_config()
+
+    # 1. Source
+    source = Prompt.ask("Enter source (YouTube URL, Web URL, or file path)")
+
+    # 2. Basic detection for better defaults
+    is_playlist = "youtube.com/playlist" in source or "list=" in source
+
+    # 3. Model
+    console.print(f"\nModel [dim](default: {cfg.model})[/]")
+    model = Prompt.ask("Change model?", default=cfg.model)
+
+    # 4. Language
+    lang = Prompt.ask("Target language code", default=cfg.language)
+
+    # 5. Templates
+    template = None
+    if cfg.prompt_templates:
+        console.print("\n[bold]Available templates:[/]")
+        tpl_keys = list(cfg.prompt_templates.keys())
+        for i, k in enumerate(tpl_keys, 1):
+            console.print(f"  [green]{i:2}[/] {k}")
+
+        tpl_choice = Prompt.ask(
+            "Select a template (number or name)", choices=["none"] + tpl_keys, default="none"
+        )
+        if tpl_choice != "none":
+            if tpl_choice.isdigit() and 1 <= int(tpl_choice) <= len(tpl_keys):
+                template = tpl_keys[int(tpl_choice) - 1]
+            else:
+                template = tpl_choice
+
+    # 6. Advanced options
+    incremental = cfg.incremental
+    if is_playlist:
+        incremental = Confirm.ask("Skip videos if notes already exist?", default=cfg.incremental)
+
+    dry_run = Confirm.ask("Dry run? (estimate only, no LLM calls)", default=False)
+
+    export = Prompt.ask(
+        "Export format (none|pdf|html)", choices=["none", "pdf", "html"], default="none"
+    )
+    if export == "none":
+        export = None
+
+    # 7. Apply overrides
+    cfg = merge_cli_overrides(
+        cfg,
+        model=model,
+        language=lang,
+        incremental=incremental,
+        dry_run=dry_run or None,
+        template=template,
+    )
+    setup_logger(cfg.verbose)
+    logger.info("Starting interactive note generation")
+
+    console.print("\n[bold green]Configuration complete. Starting pipeline...[/]\n")
+    _run_auto(source, cfg, export=export)
+
+
+@app.command()
+def setup() -> None:
+    """Interactive guided setup wizard — configure provider, model, API keys."""
+    from rich.console import Console
+
+    console = Console()
+    console.print("\n[bold cyan]notegen setup[/] — guided configuration\n")
+
+    # Load existing config for defaults
+    current_raw: dict[str, Any] = {}
+    if DEFAULT_CONFIG_PATH.exists():
+        try:
+            current_raw = yaml.safe_load(DEFAULT_CONFIG_PATH.read_text(encoding="utf-8")) or {}
+        except Exception:
+            pass
+
+    # Step 1: Choose provider
+    current_model = current_raw.get("model", "")
+    current_provider = current_model.split("/")[0] if "/" in current_model else "groq"
+
+    _PROVIDER_LIST = [
+        ("groq", "free tier, fast (recommended)"),
+        ("nvidia_nim", "free tier — build.nvidia.com"),
+        ("gemini", "free tier"),
+        ("anthropic", "paid"),
+        ("openai", "paid"),
+        ("mistral", "paid"),
+        ("deepseek", "paid"),
+        ("together_ai", "paid"),
+        ("xai", "paid"),
+        ("cohere", "paid"),
+        ("perplexity", "paid"),
+        ("ollama", "local, no key needed"),
+    ]
+
+    console.print("[bold]Available providers:[/]")
+    for i, (prov, label) in enumerate(_PROVIDER_LIST, 1):
+        console.print(f"  [green]{i:2}[/] {prov:<15} [dim]{label}[/]")
+
+    console.print(f"\nChoose provider [Enter = {current_provider}]: ", end="")
+    choice = input().strip()
+    if not choice:
+        provider = current_provider
+    elif choice.isdigit() and 1 <= int(choice) <= len(_PROVIDER_LIST):
+        provider = _PROVIDER_LIST[int(choice) - 1][0]
+    else:
+        provider = choice
+
+    # Step 2: Choose model
+    _PROVIDER_TEST_MODELS = {
+        "anthropic": "anthropic/claude-haiku-4-5-20251001",
+        "openai": "openai/gpt-4o-mini",
+        "groq": "groq/llama-3.3-70b-versatile",
+        "gemini": "gemini/gemini-2.0-flash",
+        "nvidia_nim": "nvidia_nim/meta/llama-3.3-70b-instruct",
+        "mistral": "mistral/mistral-small-latest",
+        "deepseek": "deepseek/deepseek-chat",
+        "together_ai": "together_ai/meta-llama/Llama-3-70b-chat-hf",
+        "ollama": "ollama/llama3",
+        "xai": "xai/grok-2",
+        "cohere": "cohere/command-r-plus",
+        "perplexity": "perplexity/sonar",
+    }
+    default_model = (
+        current_model
+        if current_model and current_model.startswith(provider)
+        else _PROVIDER_TEST_MODELS.get(provider, f"{provider}/unknown")
+    )
+    console.print(f"\nModel [Enter = {default_model}]: ", end="")
+    model_input = input().strip()
+    model = model_input if model_input else default_model
+
+    # Step 3: Output directory
+    current_out = current_raw.get("output_dir", "~/notes")
+    console.print(f"\nOutput directory [Enter = {current_out}]: ", end="")
+    output_dir = input().strip() or current_out
+
+    # Step 4: API keys
+    all_new_keys: list[str] = []
+    if provider != "ollama":
+        console.print(f"\nPaste API key(s) for [bold]{provider}[/] (blank line to stop):")
+        while True:
+            console.print("  key: ", end="")
+            k = input().strip()
+            if not k:
+                break
+            if "XXXX" in k or "<your" in k:
+                console.print("  [yellow]Skipped — looks like a placeholder[/]")
+                continue
+            all_new_keys.append(k)
+            console.print("  [green]✓[/] added")
+
+    # Step 5: Additional providers
+    extra_providers: list[tuple[str, list[str]]] = []
+    console.print("\nAdd keys for another provider? [y/N]: ", end="")
+    if input().strip().lower() == "y":
+        while True:
+            console.print("Provider name (blank to stop): ", end="")
+            extra_prov = input().strip().lower()
+            if not extra_prov:
+                break
+            prov_keys = []
+            console.print(f"Keys for {extra_prov} (blank to stop):")
+            while True:
+                console.print("  key: ", end="")
+                k = input().strip()
+                if not k:
+                    break
+                prov_keys.append(k)
+                console.print("  [green]✓[/] added")
+            if prov_keys:
+                extra_providers.append((extra_prov, prov_keys))
+
+    # Step 6: Write config
+    action = "updated" if DEFAULT_CONFIG_PATH.exists() else "created"
+    _merge_config(DEFAULT_CONFIG_PATH, provider, all_new_keys, model, output_dir)
+    for ep, ek in extra_providers:
+        _merge_config(DEFAULT_CONFIG_PATH, ep, ek)
+
+    console.print(f"\n[green]✓[/] Config {action}: {DEFAULT_CONFIG_PATH}")
+
+    # Step 7: Run doctor
+    console.print("\nRun doctor to verify connection? [Y/n]: ", end="")
+    if input().strip().lower() != "n":
+        try:
+            cfg = load_config(DEFAULT_CONFIG_PATH)
+            console.print(f"\n[dim]Testing {cfg.model}...[/]")
+            api_key = cfg.pick_api_key()
+            kwargs: dict = {
+                "model": cfg.model,
+                "messages": [{"role": "user", "content": "Reply with the single word: ok"}],
+                "max_tokens": 5,
+                "temperature": 0,
+            }
+            if api_key:
+                kwargs["api_key"] = api_key
+
+            t0 = time.monotonic()
+            resp = cast(Any, litellm.completion(**kwargs))
+            ms = int((time.monotonic() - t0) * 1000)
+            reply = cast(str, resp.choices[0].message.content).strip()
+            console.print(f"[green]✓[/] API call OK — {ms}ms, reply: {reply!r}")
+        except Exception as exc:
+            console.print(f"[red]✗[/] API call failed: {exc}")
+            console.print("[dim]Check your API key and try `notegen doctor`[/]")
+
+    console.print("\n[green]Setup complete.[/] Run: notegen <url>\n")
+
+
 def _merge_config(
-    path: Path,
-    provider: str,
-    model: str,
-    output_dir: str,
-    new_keys: list[str],
+    path: Path, provider: str, new_keys: list[str], model: str = "", output_dir: str = ""
 ) -> None:
     raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {} if path.exists() else {}
 
@@ -572,232 +614,259 @@ def _merge_config(
     path.write_text(yaml.dump(raw, default_flow_style=False, allow_unicode=True), encoding="utf-8")
 
 
-@app.command()
-def setup() -> None:
-    """Interactive guided setup wizard — configure provider, model, API keys."""
+@config_app.command("init")
+def config_init() -> None:
+    """Create a default configuration file at ~/.config/notes-gen/config.yaml."""
+    if DEFAULT_CONFIG_PATH.exists():
+        typer.echo(f"Config already exists: {DEFAULT_CONFIG_PATH}")
+        raise typer.Exit(1)
+    DEFAULT_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    DEFAULT_CONFIG_PATH.write_text(CONFIG_TEMPLATE, encoding="utf-8")
+    typer.echo(f"Config written to {DEFAULT_CONFIG_PATH}")
+    typer.echo("Next: run `notegen config open` to add your API key.")
+    typer.echo("Tip: `notegen setup` is the recommended way to configure notegen")
+
+
+@config_app.command("open")
+def config_open() -> None:
+    """Open the configuration file in your default editor."""
+    if not DEFAULT_CONFIG_PATH.exists():
+        config_init()
+        typer.echo(f"Config created: {DEFAULT_CONFIG_PATH}")
+    typer.echo(f"Opening {DEFAULT_CONFIG_PATH}")
+    if platform.system() == "Windows":
+        os.startfile(DEFAULT_CONFIG_PATH)
+    elif platform.system() == "Darwin":
+        subprocess.run(["open", str(DEFAULT_CONFIG_PATH)])
+    else:
+        subprocess.run(["xdg-open", str(DEFAULT_CONFIG_PATH)])
+
+
+@config_app.command("validate")
+def config_validate() -> None:
+    """Check config for errors and show stats."""
     from rich.console import Console
-    import yaml
 
     console = Console()
-    console.print("\n[bold cyan]notegen setup[/] — guided configuration\n")
+    errors = []
 
-    # Load existing config for defaults
-    current_raw = {}
-    if DEFAULT_CONFIG_PATH.exists():
-        try:
-            current_raw = yaml.safe_load(DEFAULT_CONFIG_PATH.read_text(encoding="utf-8")) or {}
-        except Exception:
-            pass
+    def _pass(msg: str):
+        console.print(f"  [green]✓[/] {msg}")
 
-    # Step 1: Choose provider
-    current_model = current_raw.get("model", "")
-    current_provider = current_model.split("/")[0] if "/" in current_model else "groq"
-    
-    console.print("[bold]Available providers:[/]")
-    for i, (prov, label) in enumerate(_PROVIDER_LIST, 1):
-        console.print(f"  [green]{i:2}[/] {prov:<15} [dim]{label}[/]")
+    def _fail(msg: str):
+        console.print(f"  [red]✗[/] {msg}")
+        errors.append(msg)
 
-    console.print(f"\nChoose provider [Enter = {current_provider}]: ", end="")
-    choice = input().strip()
-    if not choice:
-        provider = current_provider
-    elif choice.isdigit() and 1 <= int(choice) <= len(_PROVIDER_LIST):
-        provider = _PROVIDER_LIST[int(choice) - 1][0]
+    console.print("\n[bold]notegen config validate[/]\n")
+
+    if not DEFAULT_CONFIG_PATH.exists():
+        _fail(f"Config file not found: {DEFAULT_CONFIG_PATH}")
     else:
-        provider = choice
-
-    # Step 2: Choose model
-    default_model = current_model if current_model and current_model.startswith(provider) else _PROVIDER_TEST_MODELS.get(provider, f"{provider}/unknown")
-    console.print(f"\nModel [Enter = {default_model}]: ", end="")
-    model_input = input().strip()
-    model = model_input if model_input else default_model
-
-    # Step 3: Output directory
-    current_out = current_raw.get("output_dir", "~/notes")
-    console.print(f"\nOutput directory [Enter = {current_out}]: ", end="")
-    output_dir = input().strip() or current_out
-
-    # Step 4: API keys
-    all_new_keys: list[str] = []
-    if provider != "ollama":
-        console.print(f"\nPaste API key(s) for [bold]{provider}[/] (blank line to stop):")
-        while True:
-            console.print("  key: ", end="")
-            key = input().strip()
-            if not key:
-                break
-            if key.startswith("#") or len(key) < 8:
-                console.print("  [yellow]Skipped — looks like a placeholder[/]")
-                continue
-            all_new_keys.append(key)
-            console.print("  [green]✓[/] added")
-
-    # Step 5: Additional providers
-    extra_providers: list[tuple[str, list[str]]] = []
-    console.print("\nAdd keys for another provider? [y/N]: ", end="")
-    if input().strip().lower() == "y":
-        while True:
-            console.print("Provider name (blank to stop): ", end="")
-            extra_prov = input().strip()
-            if not extra_prov:
-                break
-            extra_keys: list[str] = []
-            console.print(f"Keys for {extra_prov} (blank to stop):")
-            while True:
-                console.print("  key: ", end="")
-                k = input().strip()
-                if not k:
-                    break
-                if not k.startswith("#") and len(k) >= 8:
-                    extra_keys.append(k)
-                    console.print("  [green]✓[/] added")
-            if extra_keys:
-                extra_providers.append((extra_prov, extra_keys))
-
-    # Step 6: Write config
-    existed = DEFAULT_CONFIG_PATH.exists()
-    if not existed:
-        DEFAULT_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        DEFAULT_CONFIG_PATH.write_text(CONFIG_TEMPLATE, encoding="utf-8")
-    _merge_config(DEFAULT_CONFIG_PATH, provider, model, output_dir, all_new_keys)
-    for ep, ek in extra_providers:
-        _merge_config(DEFAULT_CONFIG_PATH, ep, "", "", ek)
-    action = "updated" if existed else "created"
-    console.print(f"\n[green]✓[/] Config {action}: {DEFAULT_CONFIG_PATH}")
-
-    # Step 7: Run doctor
-    console.print("\nRun doctor to verify connection? [Y/n]: ", end="")
-    if input().strip().lower() != "n":
         try:
-            import time
+            cfg = load_config()
+            _pass("Config file loaded")
+            _pass(f"Active model: {cfg.model}")
+            _pass(f"Output directory: {cfg.output_dir}")
 
-            import litellm
+            # Check keys
+            providers = [p for p, keys in cfg.api_keys.items() if keys]
+            if providers:
+                _pass(f"Configured providers: {', '.join(providers)}")
+            else:
+                _fail("No API keys found in config")
 
-            cfg = load_config(DEFAULT_CONFIG_PATH)
-            console.print(f"\n[dim]Testing {cfg.model}...[/]")
-            api_key = cfg.pick_api_key()
-            kwargs: dict = {
-                "model": cfg.model,
-                "messages": [{"role": "user", "content": "Reply with the single word: ok"}],
-                "max_tokens": 5,
-                "temperature": 0,
-            }
-            if api_key:
-                kwargs["api_key"] = api_key
-            t0 = time.monotonic()
-            resp = litellm.completion(**kwargs)
-            ms = int((time.monotonic() - t0) * 1000)
-            reply = resp.choices[0].message.content.strip()
-            console.print(f"[green]✓[/] API call OK — {ms}ms, reply: {reply!r}")
-        except Exception as exc:
-            console.print(f"[red]✗[/] API call failed: {exc}")
-            console.print("[dim]Check your API key and try `notegen doctor`[/]")
+        except Exception as e:
+            _fail(f"Error parsing config: {e}")
 
-    console.print("\n[green]Setup complete.[/] Run: notegen <url>\n")
+    console.print()
+    if not errors:
+        console.print("[green]Config is valid.[/]\n")
+    else:
+        console.print("[red]Config has issues — fix them before running notegen.[/]\n")
+        raise typer.Exit(1)
 
 
-_ASCII_ART = """\
+@config_app.command("show")
+def config_show() -> None:
+    """Print the current configuration (hides API keys)."""
+    cfg = load_config()
+    # Convert to dict and stringify paths for YAML
+    data = cfg.model_dump()
+    data["output_dir"] = str(data["output_dir"])
+    
+    if "api_keys" in data:
+        for provider in data["api_keys"]:
+            data["api_keys"][provider] = [f"{k[:6]}...{k[-4:]}" for k in data["api_keys"][provider]]
+    typer.echo(yaml.dump(data, default_flow_style=False), nl=False)
+
+
+@app.command()
+def doctor() -> None:
+    """Diagnose your environment and LLM connectivity."""
+    from rich.console import Console
+
+    console = Console()
+    errors = []
+
+    def _pass(msg: str):
+        console.print(f"  [green]✓[/] {msg}")
+
+    def _fail(msg: str):
+        console.print(f"  [red]✗[/] {msg}")
+        errors.append(msg)
+
+    console.print("\n[bold]notegen doctor[/]\n")
+
+    # 1. Environment
+    _pass(f"OS: {platform.system()} {platform.release()}")
+    _pass(f"Python: {platform.python_version()}")
+    _pass(f"Version: {_get_version()}")
+
+    # 2. Config
+    cfg = Config()
+    if not DEFAULT_CONFIG_PATH.exists():
+        _fail("Config file missing. Run `notegen config init`.")
+    else:
+        try:
+            cfg = load_config()
+            _pass("Config file found")
+        except Exception as e:
+            _fail(f"Config error: {e}")
+
+    # 3. Connection
+    try:
+        import httpx
+
+        with httpx.Client(timeout=5) as client:
+            client.get("https://google.com")
+        _pass("Internet connection OK")
+    except Exception:
+        _fail("No internet connection")
+
+    if errors:
+        console.print("\n[red]Config issues found — fix before continuing.[/]\n")
+        raise typer.Exit(1)
+
+    console.print(f"\n[dim]Sending test request to {cfg.model}...[/]")
+    api_key = cfg.pick_api_key()
+    masked = f"{api_key[:6]}...{api_key[-4:]}" if api_key else None
+
+    try:
+        t0 = time.monotonic()
+        kwargs: dict = {
+            "model": cfg.model,
+            "messages": [{"role": "user", "content": "Reply with the single word: ok"}],
+            "max_tokens": 5,
+            "temperature": 0,
+        }
+        if api_key:
+            kwargs["api_key"] = api_key
+
+        resp = cast(Any, litellm.completion(**kwargs))
+        latency_ms = int((time.monotonic() - t0) * 1000)
+        reply = cast(str, resp.choices[0].message.content).strip()
+    except Exception as exc:
+        _fail(f"API call failed: {exc}")
+        console.print("\n[red]Doctor found issues.[/]\n")
+        raise typer.Exit(1)
+
+    _pass(f"API call succeeded — latency {latency_ms}ms, reply: {reply!r}")
+    if masked:
+        _pass(f"Key used: {masked}")
+    console.print("\n[green]Doctor OK — notegen is ready.[/]\n")
+    raise typer.Exit(0)
+
+
+def main() -> None:
+    import sys
+
+    # Typer help customization
+    if len(sys.argv) == 1 or sys.argv[1] in ("--help", "-h"):
+        _show_custom_help()
+        return
+
+    # Check for legacy source mapping
+    if len(sys.argv) > 1 and sys.argv[1] not in _KNOWN_SUBCOMMANDS:
+        # If the first arg is not a command, it's likely a URL/source for 'auto'
+        sys.argv.insert(1, "auto")
+
+    app()
+
+
+_ASCII_ART = r"""
  ███╗   ██╗ ██████╗ ████████╗███████╗ ██████╗ ███████╗███╗   ██╗
  ████╗  ██║██╔═══██╗╚══██╔══╝██╔════╝██╔════╝ ██╔════╝████╗  ██║
  ██╔██╗ ██║██║   ██║   ██║   █████╗  ██║  ███╗█████╗  ██╔██╗ ██║
  ██║╚██╗██║██║   ██║   ██║   ██╔══╝  ██║   ██║██╔══╝  ██║╚██╗██║
  ██║ ╚████║╚██████╔╝   ██║   ███████╗╚██████╔╝███████╗██║ ╚████║
- ╚═╝  ╚═══╝ ╚═════╝    ╚═╝   ╚══════╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝\
-"""
+ ╚═╝  ╚═══╝ ╚═════╝    ╚═╝   ╚══════╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝"""
 
 
-def _show_rich_help() -> None:
+def _show_custom_help():
     from rich.console import Console
     from rich.table import Table
 
-    ver = _get_version()
     console = Console()
+    ver = _get_version()
+
+    win_path = r"%USERPROFILE%\.config\notes-gen\config.yaml"
+
     console.print(f"\n[#50C878]{_ASCII_ART}[/]")
     console.print(f"[dim]v{ver}[/]  YouTube · playlists · web pages → rich Obsidian notes\n")
 
-    def _table(flag_col: bool = False) -> Table:
-        t = Table(box=None, show_header=False, padding=(0, 2, 0, 2), expand=False)
-        t.add_column(no_wrap=True, style="green" if not flag_col else "yellow")
-        t.add_column(style="dim")
-        return t
-
+    # Setup section
     console.print("[bold]FIRST-TIME SETUP[/]")
-    t = _table()
-    t.add_row("notegen setup", "guided wizard — choose provider, add API key, verify")
+    t = Table(show_header=False, box=None, padding=(0, 2))
+    t.add_row("notegen setup", "[dim]Interactive first-run configuration[/]")
+    t.add_row("notegen doctor", "[dim]Check environment and API keys[/]")
     console.print(t)
 
     console.print("\n[bold]COMMANDS[/]")
-    t = _table()
-    t.add_row("notegen <url-or-file>", "auto-detect source (YouTube, web, file)")
-    t.add_row("notegen video <url>", "YouTube video → single note")
-    t.add_row("notegen playlist <url>", "YouTube playlist → folder + index.md")
-    t.add_row("notegen web <url>", "crawl web page → notes")
-    t.add_row("notegen text <file|->", "local file or stdin")
-    t.add_row("notegen auto <source>", "explicit auto-detect")
-    t.add_row("notegen watch <dir>", "auto-process new .txt/.md files dropped in dir")
+    t = Table(show_header=False, box=None, padding=(0, 2))
+    t.add_row("notegen <url>", "[dim]Generate notes (auto-detects type)[/]")
+    t.add_row("notegen interactive", "[dim]Guided note generation wizard[/]")
+    t.add_row("notegen playlist <url>", "[dim]Convert whole YouTube playlist[/]")
+    t.add_row("notegen web <url>", "[dim]Scrape site and generate notes[/]")
+    t.add_row("notegen watch <dir>", "[dim]Monitor folder for new text files[/]")
     console.print(t)
 
     console.print("\n[bold]SOURCE FLAGS[/] [dim](video · playlist · web · text · auto)[/]")
-    t = _table(flag_col=True)
-    t.add_row("--version", "print version and exit")
-    t.add_row("-o / --output-dir PATH", "override output directory")
-    t.add_row("-m / --model TEXT", "LiteLLM model  e.g. [green]groq/llama-3.3-70b-versatile[/]")
-    t.add_row("-v / --verbose", "show chunk count, token usage, crawl status")
-    t.add_row("--no-mermaid", "disable mermaid diagram generation")
-    t.add_row("--no-cache", "skip cache read/write for this run")
-    t.add_row("-n / --dry-run", "print token estimate; skip LLM call")
-    t.add_row("--format TEXT", "obsidian (default) | logseq | plain | roam")
-    t.add_row("--force", "skip playlist videos without captions")
-    t.add_row("--force-restart", "ignore playlist resume file, reprocess all")
-    t.add_row("-p / --prompt TEXT", "extra instructions appended to LLM prompt")
+    t = Table(show_header=False, box=None, padding=(0, 2))
+    t.add_row("-o, --output-dir <path>", "[dim]Override output directory[/]")
+    t.add_row("-m, --model <str>", "[dim]Override LLM model[/]")
+    t.add_row("-n, --dry-run", "[dim]Print estimate, skip API calls[/]")
+    t.add_row("-v, --verbose", "[dim]Show detailed logs[/]")
+    t.add_row("--lang <code>", "[dim]Target language (e.g. en, es, hi)[/]")
+    t.add_row("-t, --template <name>", "[dim]Apply named prompt style[/]")
+    t.add_row("--export <fmt>", "[dim]Export to pdf|html|docx[/]")
     console.print(t)
 
     console.print("\n[bold]SETUP & DIAGNOSTICS[/]")
-    t = _table()
-    t.add_row("notegen setup", "interactive first-run wizard")
-    t.add_row("notegen doctor [--provider PROVIDER]", "config check + real API call")
+    t = Table(show_header=False, box=None, padding=(0, 2))
+    t.add_row("notegen setup", "[dim]Configure providers and keys[/]")
+    t.add_row("notegen doctor", "[dim]Verify environment and connectivity[/]")
     console.print(t)
 
     console.print("\n[bold]CONFIG[/]")
-    t = _table()
-    t.add_row("notegen config init", "create config file [dim](use setup instead)[/]")
-    t.add_row("notegen config open", "open in default editor")
-    t.add_row("notegen config show", "print resolved config")
-    t.add_row("notegen config validate", "check structure + API key presence")
+    t = Table(show_header=False, box=None, padding=(0, 2))
+    t.add_row("notegen config init", "[dim]Create default config file[/]")
+    t.add_row("notegen config open", "[dim]Open config in editor[/]")
+    t.add_row("notegen config show", "[dim]Print current settings[/]")
     console.print(t)
 
     console.print("\n[bold]CACHE[/]")
-    t = _table()
-    t.add_row("notegen cache clear", "remove all cached transcripts + notes")
+    t = Table(show_header=False, box=None, padding=(0, 2))
+    t.add_row("notegen cache clear", "[dim]Delete all local cache files[/]")
     console.print(t)
 
     console.print("\n[bold]CONFIG FILE[/]")
     console.print("  [dim]Linux/macOS[/]  [green]~/.config/notes-gen/config.yaml[/]")
-    win_path = r"%USERPROFILE%\.config\notes-gen\config.yaml"
     console.print(f"  [dim]Windows[/]     [green]{win_path}[/]")
     console.print("\n  [dim]Free providers: groq · nvidia_nim · gemini[/]")
     console.print(
-        "  [dim]YouTube languages: English (direct) · Hindi · Malayalam (auto-translated)[/]\n"
+        "\n  [italic dim]Full docs & examples: https://github.com/moneytosms/notegen[/]\n"
     )
 
 
-def main() -> None:
-    """Entry point: show rich help or inject 'auto' subcommand for bare URL/file."""
-    import sys
-
-    if sys.platform == "win32":
-        for _stream in ("stdout", "stderr"):
-            _s = getattr(sys, _stream, None)
-            if _s is not None and hasattr(_s, "reconfigure"):
-                _s.reconfigure(encoding="utf-8", errors="replace")
-
-    args = sys.argv[1:]
-    if not args or args == ["--help"] or args == ["-h"]:
-        _show_rich_help()
-        return
-    if args == ["--version"] or args == ["-V"]:
-        typer.echo(f"notegen {_get_version()}")
-        return
-    if args and not args[0].startswith("-") and args[0] not in _KNOWN_SUBCOMMANDS:
-        sys.argv.insert(1, "auto")
-    app()
+if __name__ == "__main__":
+    main()

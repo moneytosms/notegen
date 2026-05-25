@@ -45,8 +45,10 @@ def test_roam_converts_wikilinks_to_hashtag_refs():
     assert "#[[Python]]" in result
 
 
-def test_format_prompt_suffix_obsidian_empty():
-    assert format_prompt_suffix("obsidian") == ""
+def test_format_prompt_suffix_obsidian_has_instructions():
+    suffix = format_prompt_suffix("obsidian")
+    assert "Obsidian" in suffix
+    assert "table" in suffix.lower()
 
 
 def test_format_prompt_suffix_plain_has_instructions():

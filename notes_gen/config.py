@@ -2,25 +2,27 @@ from __future__ import annotations
 
 import os
 import random
-from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict, List
 
 import yaml
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 
 DEFAULT_CONFIG_PATH = Path.home() / ".config" / "notes-gen" / "config.yaml"
 DEFAULT_MODEL = "anthropic/claude-sonnet-4-6"
 
 
-@dataclass
-class Config:
-    output_dir: Path = None  # type: ignore[assignment]
+class Config(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    output_dir: Path = Field(default_factory=lambda: Path.home() / "notes")
     model: str = DEFAULT_MODEL
+    api_base: Optional[str] = None
     mermaid: bool = True
     max_concurrent: int = 5
     web_max_pages: int = 50
     web_max_depth: int = 3
-    api_keys: dict[str, list[str]] = field(default_factory=dict)
+    api_keys: Dict[str, List[str]] = Field(default_factory=dict)
     max_retries: int = 5
     retry_base_delay: float = 60.0
     verbose: bool = False
@@ -30,11 +32,17 @@ class Config:
     merger_similarity_threshold: float = 0.7
     output_format: str = "obsidian"
     extra_prompt: str = ""
+    language: str = "en"
+    incremental: bool = True
+    download_images: bool = True
+    prompt_templates: Dict[str, str] = Field(default_factory=dict)
 
-    def __post_init__(self) -> None:
-        if self.output_dir is None:
-            self.output_dir = Path.home() / "notes"
-        self.output_dir = Path(self.output_dir)
+    @field_validator("output_dir", mode="before")
+    @classmethod
+    def parse_path(cls, v: str | Path) -> Path:
+        if isinstance(v, str):
+            return Path(v).expanduser()
+        return v
 
     def pick_api_key(self) -> str | None:
         """Return a random key for the active provider, or None if not configured."""
@@ -50,67 +58,42 @@ class Config:
 def load_config(path: Path = DEFAULT_CONFIG_PATH) -> Config:
     if not path.exists():
         return Config()
-    raw = yaml.safe_load(path.read_text()) or {}
-    kwargs: dict = {}
-    if "output_dir" in raw:
-        kwargs["output_dir"] = Path(raw["output_dir"]).expanduser()
-    scalar_fields = (
-        "model",
-        "mermaid",
-        "max_concurrent",
-        "web_max_pages",
-        "web_max_depth",
-        "max_retries",
-        "retry_base_delay",
-        "verbose",
-        "cache",
-        "max_output_tokens",
-        "merger_similarity_threshold",
-        "output_format",
-        "extra_prompt",
-    )
-    for f in scalar_fields:
-        if f in raw:
-            kwargs[f] = raw[f]
+    
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        raw = {}
+
+    # Ensure api_keys is cleaned
     if "api_keys" in raw and isinstance(raw["api_keys"], dict):
         cleaned: dict[str, list[str]] = {}
         for provider, keys in raw["api_keys"].items():
             if isinstance(keys, list):
                 cleaned[provider] = [str(k) for k in keys if k]
-        kwargs["api_keys"] = cleaned
-    return Config(**kwargs)
+        raw["api_keys"] = cleaned
+
+    return Config(**raw)
 
 
 def merge_cli_overrides(
     cfg: Config,
-    *,
-    output_dir: Optional[Path] = None,
-    model: Optional[str] = None,
-    mermaid: Optional[bool] = None,
-    verbose: Optional[bool] = None,
-    cache: Optional[bool] = None,
-    dry_run: Optional[bool] = None,
-    output_format: Optional[str] = None,
-    extra_prompt: Optional[str] = None,
+    **kwargs,
 ) -> Config:
-    overrides: dict = {}
-    if output_dir is not None:
-        overrides["output_dir"] = output_dir
-    if model is not None:
-        overrides["model"] = model
-    if mermaid is not None:
-        overrides["mermaid"] = mermaid
-    if verbose is not None:
-        overrides["verbose"] = verbose
-    if cache is not None:
-        overrides["cache"] = cache
-    if dry_run is not None:
-        overrides["dry_run"] = dry_run
-    if output_format is not None:
-        overrides["output_format"] = output_format
-    if extra_prompt is not None:
-        overrides["extra_prompt"] = extra_prompt
-    return replace(cfg, **overrides)
+    # Filter out None values to avoid overriding with defaults
+    overrides = {k: v for k, v in kwargs.items() if v is not None}
+    
+    # Special handling for prompt templates and extra prompt
+    template = overrides.pop("template", None)
+    if template and template in cfg.prompt_templates:
+        tpl_content = cfg.prompt_templates[template]
+        current_extra = overrides.get("extra_prompt") or cfg.extra_prompt
+        if current_extra:
+            overrides["extra_prompt"] = f"{current_extra}\n\n{tpl_content}"
+        else:
+            overrides["extra_prompt"] = tpl_content
+
+    # Create new config with overrides
+    return cfg.model_copy(update=overrides)
 
 
 CONFIG_TEMPLATE = """\
@@ -141,7 +124,11 @@ mermaid: true
 #   together_ai/meta-llama/Llama-3-70b-chat-hf
 #   deepseek/deepseek-chat
 #   ollama/llama3                   # local, no key needed
+# model: anthropic/claude-sonnet-4-6
 model: anthropic/claude-sonnet-4-6
+
+# Optional: API base URL for local LLMs (Ollama, LM Studio) or proxies
+# api_base: http://localhost:11434
 
 # ── API Keys ──────────────────────────────────────────────────────────────────
 # Add multiple keys per provider — notegen picks one at random per request
@@ -212,6 +199,20 @@ web_max_depth: 3     # max link-follow depth
 #
 # max_retries: total retry attempts per LLM call (default 5).
 # retry_base_delay: base wait in seconds for exponential backoff (default 60).
+
+# ── Behavior ──────────────────────────────────────────────────────────────────
+# Target language for notes (ISO 639-1 code, e.g. en, es, fr, de, hi)
+language: en
+
+# Skip videos in a playlist if the .md note already exists
+incremental: true
+
+# ── Templates ─────────────────────────────────────────────────────────────────
+# Reusable prompt snippets to change note style.
+# Use via: notegen video <url> --template code
+prompt_templates:
+  code: "Focus heavily on implementation details, code blocks, and syntax. Minimize theoretical fluff."
+  theory: "Focus on high-level architecture, design patterns, and first principles. Keep code samples brief."
 #   With 5 retries and base 60s: waits 60 → 120 → 240 → 480 → 960 seconds.
 #   Generous defaults intentionally — free tiers often have 1 req/min limits.
 max_retries: 5

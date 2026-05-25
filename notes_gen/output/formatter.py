@@ -1,4 +1,4 @@
-from __future__ import annotations
+from typing import Any
 
 import re
 import unicodedata
@@ -25,6 +25,7 @@ def build_frontmatter(
     type: str,
     tags: list[str],
     date: date,
+    **kwargs: Any,
 ) -> str:
     data = {
         "title": title,
@@ -33,4 +34,5 @@ def build_frontmatter(
         "tags": tags,
         "date": date.isoformat(),
     }
+    data.update(kwargs)
     return f"---\n{yaml.dump(data, default_flow_style=False, allow_unicode=True)}---\n"

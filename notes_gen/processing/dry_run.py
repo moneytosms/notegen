@@ -11,11 +11,12 @@ _COST_PER_1M: dict[str, float] = {
     "groq": 0.0,
     "gemini": 0.0,
     "ollama": 0.0,
+    "ollama_chat": 0.0,
     "together_ai": 0.90,
     "deepseek": 0.27,
     "mistral": 2.00,
     "cohere": 0.50,
-    "nvidia_nim": 0.20,
+    "nvidia_nim": 0.0,  # Free tier
     "xai": 2.00,
     "perplexity": 1.00,
 }
