@@ -4,7 +4,7 @@ Convert YouTube videos, playlists, and web pages into structured, domain-expert-
 
 [![Tests](https://github.com/moneytosms/notegen/actions/workflows/ci.yml/badge.svg)](https://github.com/moneytosms/notegen/actions/workflows/ci.yml)
 [![Version](https://img.shields.io/badge/version-2.4.1-blue)](https://github.com/moneytosms/notegen)
-
+[![PyPI Downloads](https://static.pepy.tech/personalized-badge/notegen?period=total&units=INTERNATIONAL_SYSTEM&left_color=BLACK&right_color=GREEN&left_text=downloads)](https://pepy.tech/projects/notegen)
 ---
 
 ## Features
