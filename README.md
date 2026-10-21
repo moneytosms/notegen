@@ -1,4 +1,8 @@
-# notegen
+<h1 align="center">notegen</h1>
+
+<p align="center">
+  <img src="./assets/readme/hero.svg" width="100%" alt="notegen: turn YouTube videos, playlists and web pages into structured Obsidian notes, shown with a sample note.">
+</p>
 
 Convert YouTube videos, playlists, and web pages into structured, domain-expert-level Obsidian notes using LLMs.
 
@@ -37,6 +41,14 @@ Convert YouTube videos, playlists, and web pages into structured, domain-expert-
 - **Rate-limit handling** — Exponential backoff with `Retry-After` header awareness via `tenacity`.
 - **Caching** — Notes are cached by URL and model; re-runs skip the LLM call unless forced.
 - **Rich dashboard** — Real-time progress, token count, and cost estimate per run.
+
+---
+
+## How it works
+
+<p align="center">
+  <img src="./assets/readme/pipeline.svg" width="100%" alt="Sources are fetched and chunked, sent to an LLM via LiteLLM, merged and formatted into an Obsidian note, optionally exported to PDF, HTML or DOCX.">
+</p>
 
 ---
 

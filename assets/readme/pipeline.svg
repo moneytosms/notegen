@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="320" viewBox="0 0 1200 320" role="img" aria-labelledby="t d">
+  <title id="t">How notegen works</title>
+  <desc id="d">Sources (YouTube video, playlist, web page, text) are fetched, chunked, sent to an LLM through LiteLLM, merged, and written as an Obsidian note, optionally exported to PDF, HTML or DOCX.</desc>
+  <rect width="1200" height="320" rx="26" fill="#1e1b2e"/>
+  <rect x="0.5" y="0.5" width="1199" height="319" rx="25.5" fill="none" stroke="#352f52"/>
+  <g font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="18" text-anchor="middle" fill="#f1eefc">
+    <g fill="#14121f" stroke="#352f52">
+      <rect x="40" y="40" width="200" height="44" rx="10"/><rect x="40" y="96" width="200" height="44" rx="10"/><rect x="40" y="152" width="200" height="44" rx="10"/><rect x="40" y="208" width="200" height="44" rx="10"/>
+      <rect x="330" y="96" width="160" height="116" rx="12"/><rect x="580" y="96" width="180" height="116" rx="12"/><rect x="850" y="96" width="150" height="116" rx="12"/>
+    </g>
+    <text x="140" y="68">YouTube video</text><text x="140" y="124">Playlist</text><text x="140" y="180">Web page</text><text x="140" y="236">Text / stdin</text>
+    <text x="410" y="146">fetch</text><text x="410" y="174" font-size="14" fill="#8f86c2">+ chunk</text>
+    <text x="670" y="146" fill="#a78bfa" font-weight="700">LLM</text><text x="670" y="174" font-size="14" fill="#8f86c2">via LiteLLM</text>
+    <text x="925" y="146">merge</text><text x="925" y="174" font-size="14" fill="#8f86c2">+ format</text>
+    <rect x="1040" y="96" width="130" height="116" rx="12" fill="#a78bfa"/><text x="1105" y="146" fill="#1e1b2e" font-weight="700">.md</text><text x="1105" y="174" font-size="14" fill="#1e1b2e">Obsidian</text>
+    <g stroke="#a78bfa" stroke-width="3" stroke-linecap="round" fill="none">
+      <path d="M242 62 H286 V154 H328"/><path d="M242 118 H286"/><path d="M242 174 H286"/><path d="M242 230 H286 V154"/>
+      <path d="M492 154 H578"/><path d="M762 154 H848"/><path d="M1002 154 H1038"/>
+    </g>
+    <text x="1105" y="252" font-size="14" fill="#8f86c2">+ PDF · HTML · DOCX</text>
+  </g>
+</svg>
